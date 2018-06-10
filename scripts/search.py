@@ -1,4 +1,4 @@
-import csv, re, join_bigrams, consts
+import csv, re, join_bigrams, consts, json
 from inflector import Inflector
 from collections import OrderedDict
 
@@ -16,7 +16,7 @@ def get_match_level(query_word, row):
     return consts.NOT_FOUND
 
 def get_search_results(query, data, exact_match = False):
-    query = join_bigrams.bigramar(query, bigrams)
+    query = join_bigrams.bigramar(query.lower(), bigrams)
     query = [query] if exact_match else query.split()
     results = [[], [], []]
     for row in data:
@@ -29,11 +29,17 @@ def get_search_results(query, data, exact_match = False):
             query_match_level = max(query_match_level, word_match_level)
         if query_match_level != consts.NOT_FOUND:
             results[query_match_level].append(row)
-    return results[0] + results[1] + results[2]
+    merged_results = results[0] + results[1] + results[2]
+    for result in merged_results:
+        for level in range(3):
+            for column in consts.SEARCH_COLUMNS[level]:
+                result.pop(column + '_processed')
+    return json.dumps(merged_results)
 
-while True:
-    query = join_bigrams.bigramar(input().lower(), bigrams)
-    results = get_search_results(query, data, False)
-    print('Found %d matches:' % len(results))
-    for result in results:
-        print('%s: %s' % (result['nome_completo'], result['titulo_em_portugues']))
+if __name__ == '__main__':
+    query = input()
+    results = get_search_results(query, data)
+    print(results)
+    # print('Found %d matches:' % len(results))
+    # for result in results:
+    #     print('%s: %s' % (result['nome_completo'], result['titulo_em_portugues']))
