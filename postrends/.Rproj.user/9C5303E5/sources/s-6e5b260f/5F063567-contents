@@ -1,0 +1,102 @@
+# data(cadmun, package = 'abjutils')
+
+library(shiny)
+library(shinydashboard)
+library(shinyWidgets)
+
+library(ggvis)
+library(ggplot2)
+library(plotly)
+library(dygraphs)
+
+library(dplyr)
+library(tidyr)
+library(tidytext)
+
+library(lubridate)
+library(stringr)
+library(leaflet)
+
+library(abjutils)
+
+#-------------------------
+options(shiny.trace = TRUE)
+
+
+
+
+load('data/coord_uf.RData')
+# load('data/d_vis.rda')
+# load('data/d_tudo.rda')
+tdm <- readRDS('data/new_tdm.rds')
+m <- readRDS('data/carf_mod.rds')
+
+all_values <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste(c('Resultado:', 'Tributo:', 'Proporção:'),
+        c(x[1], x[2], round((x[4] - x[3]) * 100, 2)),
+        collapse = '<br />')
+}
+
+all_barras <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste(c('Resultado:', paste0(names(x)[2], ':'), 'Proporção:'),
+        c(x[1], x[2], round((x[4] - x[3]) * 100, 2)),
+        collapse = '<br />')
+}
+
+all_values2 <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste0(c('', 'n: '), format(x)[-2], collapse = "<br />")
+}
+
+clean_txt <- function(txt) {
+  txt %>% 
+    stringr::str_to_upper() %>% 
+    abjutils::rm_accent() %>% 
+    stringr::str_replace_all("[[:space:]]+", " ") %>% 
+    stringr::str_squish() %>% 
+    stringr::str_replace_all("[^0-9A-Z ]", " ") %>% 
+    stringr::str_squish()
+}
+
+#-------------------------
+np <- 'neg(ar)?(ou-se)? ?provimento' #Fav
+dp <- 'dar? ?(.{1})?provi(mento)?'
+ad2<- 'reconhecer?(u)?(u-se)?( de)?( ofício)?( a)? decad(ência)?(ente)?(s)?|acatar( a)? (preliminar de )?decad(ência)?(ente)?(s)?|acolher?(u-se)?( a)? (preliminar de )?decad(ência)?(ente)?(s)?|declar(ar)?(ou)?(ou-se)?( a)? (preliminar de )?decad(ência)?(ente)?(s)?' #Desfav
+dc <- 'declin(ou)?(ada)?(ou-se)?(ar)?( d?a)? competência'
+emb <- 'acolher?(u-se)? ?os embargos|admitir?(u-se)? ?os embargos'
+
+
+d_vis <- readRDS('data/d_vis.rds') %>% 
+  select(-n)  %>%
+  mutate(turma = case_when(turma == 'ESPECIAL' ~ 'TURMA ESPECIAL',
+                           turma == 'TERCEIRA'~ '3a TURMA',
+                           TRUE ~ turma),
+         turma = rm_accent(turma),
+         camara = rm_accent(camara),
+         txt_decisao = str_to_lower(str_replace_all(txt_decisao, '\r', '')),
+         resultado = case_when(resultado == 'VAZIO' & str_detect(txt_decisao, ad2)~ 'DESFAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, np)~ 'FAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, dp)~ 'DESFAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, dc)~ 'VAZIO',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, emb)~ 'VAZIO',
+                               TRUE ~resultado))
+
+load('data/cadmun.rda')
+ufs <- c(sort(unique(as.character(cadmun$uf))), 'VAZIO')
+
+
+secoes <- d_vis$secao %>% unique %>% sort
+camaras <- d_vis$camara %>% unique %>% sort
+turmas <- d_vis$turma %>% unique %>% sort
+
+
+preparar <- function(x) {
+  x %>% 
+    tolower() %>% 
+    tm::stemDocument('portuguese') %>% 
+    tm::stripWhitespace() %>% 
+    strsplit(' ') %>% 
+    unlist()
+}

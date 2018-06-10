@@ -1,0 +1,20 @@
+getwd()
+
+relatores <- readRDS('data/relatores.rds') 
+
+relat <- relatores %>% count(tipo)
+
+readRDS('data/d_vis.rds') %>%
+  select(relator,tipo) %>%
+  distinct %>%
+  count(tipo)
+
+
+dado <- dados %>% count(tipo)
+
+todos_relat <- readRDS('data/relatores.rds')
+x<-readRDS('data/d_vis.rds') %>%  
+  select(-tipo) %>%
+  left_join(todos_relat, 'relator')
+
+

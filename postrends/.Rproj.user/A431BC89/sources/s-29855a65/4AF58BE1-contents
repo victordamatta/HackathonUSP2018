@@ -1,0 +1,285 @@
+# data(cadmun, package = 'abjutils')
+
+library(shiny)
+library(shinydashboard)
+library(shinyWidgets)
+
+library(ggvis)
+library(ggplot2)
+library(plotly)
+library(dygraphs)
+
+library(dplyr)
+library(tidyr)
+library(tidytext)
+
+library(lubridate)
+library(stringr)
+library(leaflet)
+
+library(abjutils)
+
+#-------------------------
+options(shiny.trace = TRUE)
+
+
+
+
+load('data/coord_uf.RData')
+# load('data/d_vis.rda')
+# load('data/d_tudo.rda')
+tdm <- readRDS('data/new_tdm.rds')
+m <- readRDS('data/carf_mod.rds')
+
+all_values <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste(c('Resultado:', 'Tributo:', 'Proporção:'),
+        c(x[1], x[2], round((x[4] - x[3]) * 100, 2)),
+        collapse = '<br />')
+}
+
+all_barras <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste(c('Resultado:', paste0(names(x)[2], ':'), 'Proporção:'),
+        c(x[1], x[2], round((x[4] - x[3]) * 100, 2)),
+        collapse = '<br />')
+}
+
+all_values2 <- function(x) {
+  if (is.null(x)) return(NULL)
+  paste0(c('', 'n: '), format(x)[-2], collapse = "<br />")
+}
+
+clean_txt <- function(txt) {
+  txt %>% 
+    stringr::str_to_upper() %>% 
+    abjutils::rm_accent() %>% 
+    stringr::str_replace_all("[[:space:]]+", " ") %>% 
+    stringr::str_squish() %>% 
+    stringr::str_replace_all("[^0-9A-Z ]", " ") %>% 
+    stringr::str_squish()
+}
+
+#-------------------------
+todos_relat <- readRDS('data/relatores.rds')
+
+np <- 'neg(ar)?(ou-se)? ?provimento' #Fav
+dp <- 'dar? ?(.{1})?provi(mento)?'
+ad2<- 'reconhecer?(u)?(u-se)?( de)?( ofício)?( a)? decad(ência)?(ente)?(s)?|acatar( a)? (preliminar de )?decad(ência)?(ente)?(s)?|acolher?(u-se)?( a)? (preliminar de )?decad(ência)?(ente)?(s)?|declar(ar)?(ou)?(ou-se)?( a)? (preliminar de )?decad(ência)?(ente)?(s)?' #Desfav
+dc <- 'declin(ou)?(ada)?(ou-se)?(ar)?( d?a)? competência'
+emb <- 'acolher?(u-se)? ?os embargos|admitir?(u-se)? ?os embargos'
+
+d_vis <- readRDS('data/d_vis.rds') %>% 
+  select(-n)  %>%
+  mutate(turma = case_when(turma == 'ESPECIAL' ~ 'TURMA ESPECIAL',
+                           turma == 'TERCEIRA'~ '3a TURMA',
+                           TRUE ~ turma),
+         turma = rm_accent(turma),
+         camara = rm_accent(camara),
+         txt_decisao = str_to_lower(str_replace_all(txt_decisao, '\r', '')),
+         resultado = case_when(resultado == 'VAZIO' & str_detect(txt_decisao, ad2)~ 'DESFAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, np)~ 'FAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, dp)~ 'DESFAVORAVEL',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, dc)~ 'VAZIO',
+                               resultado == 'VAZIO' & str_detect(txt_decisao, emb)~ 'VAZIO',
+                               TRUE ~resultado))%>%
+  select(-tipo) %>%
+  left_join(todos_relat, 'relator')
+
+
+load('data/cadmun.rda')
+ufs <- c(sort(unique(as.character(cadmun$uf))), 'VAZIO')
+
+
+secoes <- d_vis$secao %>% unique %>% sort
+camaras <- d_vis$camara %>% unique %>% sort
+turmas <- d_vis$turma %>% unique %>% sort
+
+
+preparar <- function(x) {
+  x %>% 
+    tolower() %>% 
+    tm::stemDocument('portuguese') %>% 
+    tm::stripWhitespace() %>% 
+    strsplit(' ') %>% 
+    unlist()
+}
+
+#------------------------MODELO------------------------#
+
+tabelao <- function(base,p,resultado){
+  
+  tab_mod <- base %>%
+    select_(p=p,resultado=resultado) %>%  arrange(p) %>%
+    mutate(percentil_p = case_when(p < quantile(.$p, 0.05) ~ '0.00-0.05',
+                                   p < quantile(.$p, 0.10) ~ '0.05-0.10',
+                                   p < quantile(.$p, 0.15) ~ '0.10-0.15',
+                                   p < quantile(.$p, 0.20) ~ '0.15-0.20',
+                                   p < quantile(.$p, 0.25) ~ '0.20-0.25',
+                                   p < quantile(.$p, 0.30) ~ '0.25-0.30',
+                                   p < quantile(.$p, 0.35) ~ '0.30-0.35',
+                                   p < quantile(.$p, 0.40) ~ '0.35-0.40',
+                                   p < quantile(.$p, 0.45) ~ '0.40-0.45',
+                                   p < quantile(.$p, 0.50) ~ '0.45-0.50',
+                                   p < quantile(.$p, 0.55) ~ '0.50-0.55',
+                                   p < quantile(.$p, 0.60) ~ '0.55-0.60',
+                                   p < quantile(.$p, 0.65) ~ '0.60-0.65',
+                                   p < quantile(.$p, 0.70) ~ '0.65-0.70',
+                                   p < quantile(.$p, 0.75) ~ '0.70-0.75',
+                                   p < quantile(.$p, 0.80) ~ '0.75-0.80',
+                                   p < quantile(.$p, 0.85) ~ '0.80-0.85',
+                                   p < quantile(.$p, 0.90) ~ '0.85-0.90',
+                                   p < quantile(.$p, 0.95) ~ '0.90-0.95',
+                                   p < quantile(.$p, 1.00) ~ '0.95-1.00'),
+           corte_p =case_when(percentil_p == '0.00-0.05'~ scales::percent(round(quantile(.$p, 0.00),3)),
+                              percentil_p == '0.05-0.10'~ scales::percent(round(quantile(.$p, 0.05),3)),
+                              percentil_p == '0.10-0.15'~ scales::percent(round(quantile(.$p, 0.10),3)),
+                              percentil_p == '0.15-0.20'~ scales::percent(round(quantile(.$p, 0.15),3)),
+                              percentil_p == '0.20-0.25'~ scales::percent(round(quantile(.$p, 0.20),3)),
+                              percentil_p == '0.25-0.30'~ scales::percent(round(quantile(.$p, 0.25),3)),
+                              percentil_p == '0.30-0.35'~ scales::percent(round(quantile(.$p, 0.30),3)),
+                              percentil_p == '0.35-0.40'~ scales::percent(round(quantile(.$p, 0.35),3)),
+                              percentil_p == '0.40-0.45'~ scales::percent(round(quantile(.$p, 0.40),3)),
+                              percentil_p == '0.45-0.50'~ scales::percent(round(quantile(.$p, 0.45),3)),
+                              percentil_p == '0.50-0.55'~ scales::percent(round(quantile(.$p, 0.50),3)),
+                              percentil_p == '0.55-0.60'~ scales::percent(round(quantile(.$p, 0.55),3)),
+                              percentil_p == '0.60-0.65'~ scales::percent(round(quantile(.$p, 0.60),3)),
+                              percentil_p == '0.65-0.70'~ scales::percent(round(quantile(.$p, 0.65),3)),
+                              percentil_p == '0.70-0.75'~ scales::percent(round(quantile(.$p, 0.70),3)),
+                              percentil_p == '0.75-0.80'~ scales::percent(round(quantile(.$p, 0.75),3)),
+                              percentil_p == '0.80-0.85'~ scales::percent(round(quantile(.$p, 0.80),3)),
+                              percentil_p == '0.85-0.90'~ scales::percent(round(quantile(.$p, 0.85),3)),
+                              percentil_p == '0.90-0.95'~ scales::percent(round(quantile(.$p, 0.90),3)),
+                              percentil_p == '0.95-1.00'~ scales::percent(round(quantile(.$p, 0.95),3))),
+           csi = case_when(percentil_p ==  '0.00-0.05' ~ '100%',
+                           percentil_p ==  '0.05-0.10' ~ '95%',
+                           percentil_p ==  '0.10-0.15' ~ '90%',
+                           percentil_p ==  '0.15-0.20' ~ '85%',
+                           percentil_p ==  '0.20-0.25' ~ '80%',
+                           percentil_p ==  '0.25-0.30' ~ '75%',
+                           percentil_p ==  '0.30-0.35' ~ '70%',
+                           percentil_p ==  '0.35-0.40' ~ '65%',
+                           percentil_p ==  '0.40-0.45' ~ '60%',
+                           percentil_p ==  '0.45-0.50' ~ '55%',
+                           percentil_p ==  '0.50-0.55' ~ '50%',
+                           percentil_p ==  '0.55-0.60' ~ '45%',
+                           percentil_p ==  '0.60-0.65' ~ '40%',
+                           percentil_p ==  '0.65-0.70' ~ '35%',
+                           percentil_p ==  '0.70-0.75' ~ '30%',
+                           percentil_p ==  '0.75-0.80' ~ '25%',
+                           percentil_p ==  '0.80-0.85' ~ '20%',
+                           percentil_p ==  '0.85-0.90' ~ '15%',
+                           percentil_p ==  '0.90-0.95' ~ '10%',
+                           percentil_p ==  '0.95-1.00' ~ '05%')) %>%
+    group_by(percentil_p,corte_p,csi) %>%
+    summarise(Total = n(),
+              Fav = sum(resultado,na.rm = T),
+              Desfav = n()-Fav) %>%
+    ungroup() %>%
+    mutate(p_fav = Fav/sum(Fav),
+           p_desfav = Desfav/sum(Desfav)) %>%
+    filter(!is.na(percentil_p)) %>%
+    arrange(percentil_p %>% desc) %>%
+    mutate(Acum_fav = purrr::accumulate(p_fav,sum),
+           Acum_desfav = purrr::accumulate(p_desfav,sum),
+           p_fav = scales::percent(p_fav),
+           p_desfav = scales::percent(p_desfav),
+           Acum_fav = scales::percent(Acum_fav),
+           Acum_desfav = scales::percent(Acum_desfav)) %>%
+    arrange(percentil_p)
+  
+  return(tab_mod)
+}
+
+
+tabela_modelo <- d_vis %>%
+  filter(!is.na(resultado), 
+         resultado != 'VAZIO', 
+         !is.na(uf),
+         uf != 'VAZIO',
+         !is.na(tipo_pessoa),
+         tipo_pessoa != 'VAZIO') %>%
+  mutate(resultado = ifelse(resultado %in% c("FAVORAVEL","PARCIALMENTE FAVORAVEL"),1,0),
+         COFINS = ifelse(str_detect(tributos, 'COFINS'),1,0),
+         IRPJ = ifelse(str_detect(tributos, 'IRPJ'),1,0),
+         CSL = ifelse(str_detect(tributos, 'CSL'),1,0),
+         CONTPREV = ifelse(str_detect(tributos, 'CONTPREV'),1,0),
+         PIS = ifelse(str_detect(tributos, 'PIS'),1,0),
+         IPI = ifelse(str_detect(tributos, 'IPI'),1,0),
+         IRPF = ifelse(str_detect(tributos, 'IRPF'),1,0),
+         OBRIGACESS = ifelse(str_detect(tributos, 'OBRIGACESS'),1,0),
+         VAZIO = ifelse(str_detect(tributos, 'VAZIO') | is.na(tributos),1,0),
+         SIMPLES = ifelse(str_detect(tributos, 'SIMPLES'),1,0),
+         ITR = ifelse(str_detect(tributos, 'ITR'),1,0),
+         CPMF = ifelse(str_detect(tributos, 'CPMF'),1,0),
+         IRF = ifelse(str_detect(tributos, 'IRF'),1,0),
+         IOF = ifelse(str_detect(tributos, 'IOF'),1,0),
+         OUTRO_TRIBUTO = ifelse(COFINS+IRPJ+CSL+CONTPREV+PIS+IPI+IRPF+OBRIGACESS+VAZIO+SIMPLES+ITR+CPMF+IRF+IOF == 0,1,0),
+         TIPO_RECURSO = case_when(str_detect(tipo_recurso,'CONTRIBUINTE') ~ 'ESPECIAL DO CONTRIBUINTE',
+                                  str_detect(tipo_recurso,'VOLUNTARIO')~ 'ESPECIAL DO VOLUNTARIO',
+                                  TRUE ~ 'OUTRO/VAZIO'),
+         SECAO = ifelse(str_detect(secao,'IDENTIFICADO'), 'NÃO IDENTIFICADO', secao),
+         TIPO_PESSOA = case_when(str_detect(tipo_pessoa, 'dica') ~ 'Juridica', 
+                                 str_detect(tipo_pessoa, 'sica') ~ 'Fisica',
+                                 TRUE ~ tipo_pessoa),
+         TURMA = case_when(str_detect(turma, '1')~ 'Primeira',
+                           str_detect(turma, '2')~ 'Segunda',
+                           str_detect(turma, '3') | str_detect(turma, 'TERCEIRA')  ~ 'Terceira',
+                           str_detect(turma, 'CSRF')~ 'CSRF',
+                           str_detect(turma, 'SUPLENTES')~ 'Suplentes',
+                           str_detect(turma, 'ESPECIAL')~ 'Especial',
+                           str_detect(turma, 'IDENTIFICADO')~ 'Outro/Nao Identificado')
+  ) %>%
+  select(rowname,
+         resultado,
+         UF=uf,
+         TIPO_RECURSO,
+         SECAO,
+         tipo,
+         TIPO_PESSOA,
+         COFINS,
+         IRPJ,
+         CSL,
+         CONTPREV,
+         PIS,
+         IPI,
+         IRPF,
+         OBRIGACESS,
+         VAZIO,
+         SIMPLES,
+         ITR,
+         CPMF,
+         IRF,
+         OUTRO_TRIBUTO,
+         IOF,
+         TURMA)
+
+
+
+fit <- glm(resultado~UF+
+             # relator+
+             TURMA+
+             SECAO+
+             TIPO_RECURSO+
+             tipo+
+             TIPO_PESSOA+
+             # CAMARA+
+             COFINS+
+             IRPJ+
+             CSL+
+             CONTPREV+
+             PIS+
+             IPI+
+             IRPF+
+             OBRIGACESS+
+             VAZIO+
+             SIMPLES+
+             ITR+
+             CPMF+
+             IRF+
+             OUTRO_TRIBUTO+
+             IOF,
+           tabela_modelo,
+           family = binomial())
+
+

@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1525139346943.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "F4D007E",
+    "lastKnownWriteTime" : 1527462289,
+    "last_content_update" : 1527462289,
+    "path" : "/srv/shiny-server/estre/app.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "13,16",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

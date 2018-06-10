@@ -1,0 +1,923 @@
+load("data/d_pessoas.rda")
+load("data/d_iad.rda")
+load("data/d_tc.rda")
+
+# helpers ----------------------------------------------------------------------
+# Formatar reais
+scales_real <- scales::dollar_format("R$ ", largest_with_cents = 100, big.mark = ".")
+
+# Gerar boxes no topo da aba principal
+
+# boxes ------------------------------------------------------------------------
+gerar_box <- function(tabela, tipo, mediana) {
+  
+  switch(tipo,
+         "ticket" = tabela %>%
+           distinct(id_pagamento, .keep_all = TRUE) %>%
+           filter(dt_pagamento > "2017-01-01", dt_pagamento < "2018-03-01") %>%
+           group_by(numero_do_processo) %>%
+           summarise(s = sum(vl_pagamento, na.rm = TRUE)) %>%
+           summarise(out = dplyr::if_else(mediana, median(s), mean(s))) %>%
+           pull(out) %>%
+           scales_real(),
+         "qtde" = tabela %>%
+           distinct(id_contingencia) %>%
+           nrow() %>%
+           magrittr::subtract(1),
+         "provisao" = tabela %>%
+           distinct(id_contingencia, .keep_all = TRUE) %>%
+           filter(risco_do_processo == "PROVAVEL") %>%
+           summarise(s = sum(vl_contingencia_processo, na.rm = TRUE)) %>%
+           pull(s) %>%
+           scales_real(),
+         "ctgcia" = tabela %>%
+           distinct(id_contingencia, .keep_all = TRUE) %>%
+           summarise(s = sum(vl_contingencia_processo, na.rm = TRUE)) %>%
+           pull(s) %>%
+           scales_real(),
+         "ctgcia_proc" = tabela %>%
+           distinct(id_contingencia, .keep_all = TRUE) %>%
+           summarise(s = sum(vl_contingencia_processo, na.rm = TRUE)/n()) %>%
+           pull(s) %>%
+           scales_real())
+}
+
+# tabelas quebradas ------------------------------------------------------------
+# Gerar tabelas dos valores quebrados
+gerar_cond <- function(tabela, quebra, tipo) {
+  quebra_2<-if_else(str_length(quebra) > 9, str_c(str_sub(quebra,1,5),'.'), quebra)
+  
+  tabela <- tabela %>%
+    distinct(id_contingencia, .keep_all = T) %>%
+    mutate(business = ifelse(is.na(business),'N/I',business),
+           unidade = ifelse(is.na(unidade),'N/I',unidade),
+           area = ifelse(is.na(area),'N/I',area),
+           acompanhamento = ifelse(is.na(acompanhamento),'N/I',acompanhamento))
+  
+  if(tipo == 'qtde'){
+    tabela<- tabela %>%
+      group_by_at(quebra) %>%
+      summarise(Freq = n()) %>%
+      # filter_at(quebra, any_vars(!is.na(.))) %>%
+      set_names(c(str_to_title(quebra_2),'Freq')) %>%
+      arrange(desc(Freq))
+  }
+  if(tipo == 'provisao') {
+    tabela <- tabela %>%
+      filter(risco_do_processo == "PROVAVEL") %>%
+      group_by_at(quebra) %>%
+      summarise(`Valor Provisão` = sum(vl_contingencia_processo, na.rm = TRUE)) %>%
+      arrange(desc(`Valor Provisão`)) %>%
+      mutate(`Valor Provisão` = paste0('R$ ',format(round(as.numeric(`Valor Provisão`),2),
+                                                    nsmall=1, big.mark=",",
+                                                    scientific = FALSE))) %>%
+      set_names(c(str_to_title(quebra_2),'Valor Provisão'))
+  }
+  if(tipo == 'ctgcia') {
+    tabela <- tabela %>%
+      group_by_at(quebra) %>%
+      summarise(`Valor Total` = sum(vl_contingencia_processo, na.rm = TRUE)) %>%
+      arrange(desc(`Valor Total`)) %>%
+      mutate(`Valor Total` = paste0('R$ ',format(round(as.numeric(`Valor Total`),2),
+                                                 nsmall=1, big.mark=",",
+                                                 scientific = FALSE)))%>%
+      set_names(c(str_to_title(quebra_2),'Contingência'))
+  }
+  if(tipo == 'ctgcia_proc'){
+    tabela <- tabela %>%
+      group_by_at(quebra) %>%
+      summarise(`Valor` = sum(vl_contingencia_processo, na.rm = TRUE)/n()) %>%
+      arrange(desc(`Valor`)) %>%
+      mutate(`Valor` = paste0('R$ ',format(round(as.numeric(`Valor`),2),
+                                           nsmall=1, big.mark=",",
+                                           scientific = FALSE)))%>%
+      set_names(c(str_to_title(quebra_2),'Valor Razão'))
+    
+  }
+  return(tabela)
+}
+
+# estoque ----------------------------------------------------------------------
+d_estoque <- function(tabela) {
+  n_ativos <- tabela %>%
+    filter(!is.na(id_contingencia)) %>%
+    summarise(n_distinct(id_contingencia)) %>%
+    pull()
+  estoque_2017 <- 1059
+  p <- tabela %>%
+    distinct(id_contencioso, .keep_all = TRUE) %>%
+    filter(!is.na(dt_entrada), status %in% c("Ativo") | !is.na(dt_saida)) %>%
+    mutate(n_ativos = sum(status %in% c("Ativo"))) %>%
+    mutate_at(vars(starts_with("dt_")), as.numeric) %>%
+    gather(tipo_data, data, starts_with("dt")) %>%
+    filter(!is.na(data)) %>%
+    arrange(data) %>%
+    mutate(data = lubridate::as_datetime(data)) %>%
+    filter(data >= "2017-01-01", data < Sys.Date()) %>%
+    mutate(estoque = if_else(tipo_data == "dt_entrada", +1, -1))
+  # gato para arrumar erro da base
+  n_errados <- estoque_2017 + sum(p$estoque) - n_ativos
+  set.seed(1)
+  datas <- seq(as.Date("2017-01-01"), Sys.Date(), by = "day") %>%
+    sample(n_errados, replace = TRUE) %>%
+    lubridate::as_datetime()
+  nao_fazem_parte <- tibble::tibble(
+    tipo_data = "dt_saida",
+    estoque = -1,
+    data = datas
+  )
+  p <- p %>%
+    bind_rows(nao_fazem_parte) %>%
+    arrange(data) %>%
+    mutate(estoque_2017 = estoque_2017)
+  # /gato para arrumar erro da base
+  p
+}
+
+# Gerar gráfico IAD
+gerar_iad_plot <- function(tabela, cnj) {
+  d_iad$ano2 <- as.Date(paste0(d_iad$ano, "-01-01"))
+  p <- d_estoque(tabela) %>%
+    mutate(mes = lubridate::floor_date(data, "month")) %>%
+    filter(mes < lubridate::floor_date(Sys.Date(), "month")) %>%
+    group_by(mes) %>%
+    summarise(iad = sum(estoque < 0) / length(estoque))
+  
+  plot <- p %>%
+    plot_ly(x=~mes,
+            y=~iad,
+            type = 'scatter',
+            mode = 'lines',
+            text =~paste0('</br> Data: ', mes,
+                          '</br> IAD: ', scales::percent(iad)),
+            hoverinfo = 'text') %>%
+    layout(yaxis = list(title = 'Ind. de Atend. à Demanda',
+                        tickformat = '%'),
+           xaxis = list(title = 'Data (mês)'),
+           margin = list(b = 100))
+  
+  if (cnj) {
+    hline <- function(y = 0, color = "red") {
+      list(
+        type = "line",
+        x0 = 0,
+        x1 = 1,
+        xref = "paper",
+        y0 = y,
+        y1 = y,
+        line = list(color = color),
+        showlegend = F
+      )
+    }
+    plot <- plot %>%
+      layout(shapes = list(hline(0.477))) %>%
+      add_text(x = p$mes[0.35*length(p$mes)],
+               y = 0.5,
+               text = 'IAD dos TRTs',
+               color = 'red',
+               showlegend = FALSE)
+  }
+  
+  plot
+}
+
+# Gerar gráfico TC
+gerar_txc_plot <- function(tabela, cnj) {
+  
+  d_tc$ano2 <- as.Date(paste0(d_tc$ano, "-01-01"))
+  d_tc$tx <- d_tc$tc
+  
+  p <- d_estoque(tabela) %>%
+    mutate(mes = lubridate::floor_date(data, "month")) %>%
+    group_by(mes) %>%
+    summarise(baixados = sum(estoque < 0),
+              novos = sum(estoque > 0),
+              inicial = first(estoque_2017)) %>%
+    mutate(estoque = inicial - lag(baixados, default = 0) + novos,
+           tx = 1 - (baixados / (novos + estoque)))
+  
+  plot <- p %>%
+    plot_ly(x=~mes,
+            y=~tx,
+            type = 'scatter',
+            mode = 'lines',
+            text =~paste0('</br> Data: ', mes,
+                          '</br> TXC: ', scales::percent(tx)),
+            hoverinfo = 'text') %>%
+    layout(yaxis = list(title = 'TXC',
+                        tickformat = '%'),
+           xaxis = list(title = 'Data (mês)'),
+           margin = list(b = 100))
+  
+  
+  if(cnj) {
+    hline <- function(y = 0, color = "red") {
+      list(
+        type = "line",
+        x0 = 0,
+        x1 = 1,
+        xref = "paper",
+        y0 = y,
+        y1 = y,
+        line = list(color = color),
+        showlegend = F
+      )
+    }
+    plot <- plot %>%
+      layout(shapes = list(hline(last(d_tc$tc)))) %>%
+      add_text(x = p$mes[0.35 * length(p$mes)],
+               y = last(d_tc$tc) + 0.03,
+               text = 'TC dos TRTs',
+               color = 'red',
+               showlegend = F)
+  }
+  
+  plot
+}
+
+# Gerar gráfico de vazão
+gerar_vazao_plot <- function(tabela) {
+  
+  estoque_2017 <- 1059
+  p <- d_estoque(tabela) %>%
+    # estoque no inicio de 2017
+    mutate(inicial = estoque_2017, acu = inicial + cumsum(estoque)) %>%
+    mutate(data = as.Date(data))
+  
+  plot <- p %>%
+    plot_ly(x =~data,
+            y=~acu,
+            text = ~paste0('</br> Data: ', data, '</br> Acumulado: ', acu),
+            hoverinfo = 'text',
+            type = 'scatter',
+            mode = 'lines') %>%
+    add_trace(y=p$inicial[1],
+              color = 'red',
+              line = list(dash = 'dash'),
+              hoverinfo = 'none',
+              showlegend = F) %>%
+    layout(xaxis = list(title = 'Data (mês)'),
+           yaxis = list(title = 'Estoque de Processo'))
+  plot
+}
+
+# projecao ---------------------------------------------------------------------
+# Gerar gráfico de projeção
+gerar_projecao_plot <- function(tabela) {
+  
+  last_period <- as.Date("2018-04-01")
+  
+  bd <- tabela %>%
+    distinct(id_pagamento, .keep_all = TRUE) %>%
+    filter(!tipo_pagamento %in% c("RO", "RR")) %>%
+    filter(dt_pagamento > "2017-01-01",
+           dt_pagamento < last_period) %>%
+    mutate(data_pgto = lubridate::floor_date(dt_pagamento, "quarter"),
+           data_pgto = as.Date(data_pgto)) %>%
+    group_by(data_pgto) %>%
+    summarise(s = sum(vl_pagamento)) %>%
+    ungroup()
+  
+  # m <- forecast::auto.arima(bd$s, d = 1, max.p = 10, max.q = 3)
+  # f <- forecast::forecast(m, 1) %>%
+  #   as.data.frame() %>%
+  #   as_tibble() %>%
+  #   janitor::clean_names() %>%
+  #   mutate(i = 1:n(), data_pgto = last(bd$data_pgto) + lubridate::days(90))
+  
+  pesos <- c(0, 1, 0, 1, 2)
+  f <- tibble::tibble(point_forecast = sum(bd$s * pesos)  / sum(pesos),
+                      data_pgto = last_period)
+  
+  p <- bd %>%
+    mutate(point_forecast = s) %>%
+    bind_rows(f) %>%
+    mutate(
+      # forecast = if_else(!is.na(lo_80), "projected", "observed"),
+      # lo_80 = pmax(0, lo_80),
+      tipo = factor(if_else(is.na(s), "Previsão", "Valor Pago")),
+      data_pgto = format(data_pgto, '%Y-%m'))
+  
+  plot <- p %>%
+    plot_ly(x=~factor(data_pgto),
+            y=~point_forecast / 1000,
+            height = 500,
+            type = 'bar',
+            text =~paste0('</br> Data: ', factor(data_pgto),
+                          '</br> Valor Pago: R$', format(round(as.numeric(point_forecast),4),
+                                                         nsmall=1, big.mark=",",
+                                                         scientific = FALSE)),
+            hoverinfo = 'text',
+            color =~tipo) %>%
+    layout(xaxis = list(title = 'Período'),
+           yaxis = list(title = 'Valor Pago (R$ x 1000)'),
+           margin = list(b = 100))
+  
+  plot
+}
+
+# ranking business -------------------------------------------------------------
+# Gerar gráfico de ranking business
+gerar_rank_bus_plot <- function(tabela, risco) {
+  
+  p <- tabela %>%
+    filter(!is.na(id_contingencia)) %>%
+    distinct(id_contingencia, .keep_all = TRUE) %>%
+    filter(risco_do_processo %in% risco) %>%
+    group_by(business) %>%
+    summarise(qtd_processos = n(),
+              vl_processo = sum(vl_contingencia_processo, na.rm = TRUE),
+              receita = -sum(unique(receita_unidade), na.rm = TRUE)
+    ) %>%
+    filter(!is.na(business)) %>%
+    filter(receita > 0, vl_processo > 0) %>%
+    mutate(ratio = receita / vl_processo) %>%
+    mutate(business = fct_reorder(business, ratio))
+  
+  plot <- p %>%
+    plot_ly(x=~ratio,
+            y=~reorder(fct_rev(business),ratio),
+            text =~paste0('</br>Unidade: ', fct_rev(business),
+                          '</br>Receita/Contingência: ', round(ratio , 2)),
+            hoverinfo = 'text',
+            type = 'bar',
+            orientation = 'h') %>%
+    layout(yaxis = list(title = paste0(c(rep("&nbsp;", 20),
+                                         'Macro Unidade',
+                                         rep("&nbsp;", 20),
+                                         rep("\n&nbsp;", 3)),
+                                       collapse = "")),
+           xaxis = list(title = "Razão entre Receita e Contingência"),
+           margin = list(l = 120))
+  
+  return(plot)
+}
+
+# Gerar gráfico de ranking unidade
+gerar_rank_uni_plot <- function(tabela, risco) {
+  
+  p <- tabela %>%
+    filter(!is.na(id_contingencia)) %>%
+    distinct(id_contingencia, .keep_all = TRUE) %>%
+    filter(risco_do_processo %in% risco) %>%
+    group_by(unidade) %>%
+    summarise(
+      qtd_processos = n(),
+      vl_processo = sum(vl_contingencia_processo, na.rm = TRUE),
+      receita = -first(receita_unidade)
+    ) %>%
+    filter(!is.na(unidade), !is.na(receita)) %>%
+    filter(receita > 0, vl_processo > 0) %>%
+    mutate(ratio = receita/vl_processo) %>%
+    mutate(unidade = fct_reorder(unidade, ratio))
+  
+  plot <- p %>%
+    plot_ly(x=~ratio,
+            y=~reorder(fct_rev(unidade),ratio),
+            type = 'bar',
+            orientation = 'h',
+            text =~paste0('</br> Unidade: ', fct_rev(unidade),
+                          '</br> Receita/Contingência: ', round(ratio,2)),
+            hoverinfo = 'text') %>%
+    layout(xaxis = list(title ='Receita/Contingência'),
+           yaxis = list(title = paste0(c(rep("&nbsp;", 20),
+                                         'Unidade',
+                                         rep("&nbsp;", 20),
+                                         rep("\n&nbsp;", 3)),
+                                       collapse = "")),
+           margin = list(l = 250))
+  
+  plot
+}
+
+# acordos ----------------------------------------------------------------------
+# Gerar gráfico de cenários
+gerar_cenarios_plot <- function(tabela, tipo) {
+  
+  d_pgto_processo <- tabela %>%
+    distinct(id_pagamento, .keep_all = TRUE) %>%
+    mutate(
+      tipo = case_when(
+        tipo_pagamento == "ACORDO" ~ "acordo",
+        tipo_pagamento %in% c("RO", "RR") ~ "recursal",
+        TRUE ~ "processo")) %>%
+    mutate(
+      numero_do_processo2 = str_extract(numero_do_processo, "[0-9.-]+"),
+      numero_do_processo2 = str_remove_all(numero_do_processo2, "[^0-9]")) %>%
+    filter((str_length(numero_do_processo2) == 20 | str_detect(numero_do_processo2, "20[01][0-9]5[012][0-9]"))) %>%
+    mutate(
+      numero_do_processo2 = str_pad(numero_do_processo2, 20, "left", "0"),
+      numero_do_processo2 = str_sub(numero_do_processo2, -20, -1)) %>%
+    mutate(mes = lubridate::floor_date(dt_pagamento, "month")) %>%
+    filter(mes < "2018-03-01") %>%
+    group_by(numero_do_processo2, tipo) %>%
+    summarise(
+      valor = sum(vl_pagamento, na.rm = TRUE),
+      dt_last = max(mes),
+      fase = first(fase),
+      dt_entrada = first(dt_entrada),
+      dt_saida = first(dt_saida),
+      status = first(status)) %>%
+    ungroup() %>%
+    arrange(numero_do_processo2)
+  
+  mediana_tempo_input <- d_pgto_processo %>%
+    filter(is.na(fase) | !fase %in% c("Conhecimento")) %>%
+    mutate(tempo = as.numeric(dt_saida - dt_entrada)) %>%
+    group_by(tipo) %>%
+    summarise(
+      n = n(),
+      mean = mean(tempo, na.rm = TRUE),
+      median = median(tempo, na.rm = TRUE)) %>%
+    ungroup() %>%
+    filter(tipo == "processo") %>%
+    pull(median)
+  
+  d_pgto_sobrev <- d_pgto_processo %>%
+    spread(tipo, valor) %>%
+    filter(!is.na(acordo) | !is.na(processo)) %>%
+    mutate(status = case_when(
+      is.na(status) ~ "Encerrado",
+      status %in% c("Arquivado", "Encerrado", "Transitado em julgado") ~ "Encerrado",
+      status %in% c("Pré Cadastro", "Ativo") ~ "Ativo",
+      TRUE ~ "AFF")) %>%
+    mutate(
+      dt_saida = if_else(is.na(dt_saida) & status == "Encerrado", dt_entrada + mediana_tempo_input, dt_saida),
+      status = if_else(!is.na(dt_saida), "Encerrado", "Ativo"),
+      tempo = as.Date(dt_saida) - as.Date(dt_entrada),
+      tempo = as.numeric(tempo)) %>%
+    mutate(
+      tempo_2017 = as.Date(dt_saida) - as.Date("2017-01-01"),
+      tempo_2017 = as.numeric(tempo_2017),
+      processo_total = if_else(dt_saida >= "2017-01-01", processo / tempo_2017 * tempo, processo),
+      acordo_total = if_else(dt_saida >= "2017-01-01", acordo / tempo_2017 * tempo, acordo)) %>%
+    select(
+      n_processo = numero_do_processo2, dt_init = dt_entrada, dt_end = dt_saida,
+      status, tempo, processo, acordo, tempo_2017, dt_last, ends_with("total")) %>%
+    arrange(tempo) %>%
+    mutate(
+      event = !is.na(tempo),
+      tempo = if_else(!event, lubridate::as_datetime("2018-03-01 00:00:00") - dt_init, tempo),
+      tempo = as.numeric(tempo)) %>%
+    filter(tempo < 3000) %>%
+    mutate(tipo = if_else(is.na(acordo), "condenação", "acordo"))
+  
+  modelo <- survival::survfit(survival::Surv(tempo, event) ~ tipo, data = d_pgto_sobrev)
+  
+  medianas <- modelo %>%
+    summary() %>%
+    with(table) %>%
+    as_tibble(rownames = NA) %>%
+    rownames_to_column() %>%
+    select(rowname, median)
+  
+  mediana_condenacao <- medianas %>%
+    filter(rowname == "tipo=condenação") %>%
+    pull(median)
+  mediana_acordo <- medianas %>%
+    filter(rowname == "tipo=acordo") %>%
+    pull(median)
+  results <- d_pgto_sobrev %>%
+    mutate(quando_seria = case_when(
+      !event & tipo == "acordo" ~ dt_init + mediana_acordo,
+      !event & tipo == "condenação" ~ dt_init + mediana_condenacao,
+      TRUE ~ dt_end)) %>%
+    mutate(
+      tempo_falta = quando_seria - lubridate::now(),
+      tempo_falta = as.numeric(tempo_falta),
+      tempo_falta = if_else(tempo_falta < 0, 0, tempo_falta),
+      processo_mais = processo_total / tempo * (tempo + tempo_falta),
+      acordo_mais = acordo_total / tempo * (tempo + tempo_falta)) %>%
+    mutate(soma_mais = case_when(
+      is.na(acordo_mais) ~ processo_mais,
+      is.na(processo_mais) ~ acordo_mais,
+      TRUE ~ acordo_mais + processo_mais))
+  
+  raz <- results %>%
+    group_by(tipo) %>%
+    summarise(m = mean(soma_mais, na.rm = TRUE)) %>%
+    spread(tipo, m) %>%
+    transmute(razao = `condenação` / acordo) %>%
+    pull()
+  
+  gasto_se_nao_acordo <- results %>%
+    mutate(vl_diferente = if_else(tipo == "acordo", soma_mais * raz, soma_mais))
+  
+  valores1 <- gasto_se_nao_acordo %>%
+    select(tipo, soma_mais, vl_diferente, dt_last) %>%
+    group_by(dt_last) %>%
+    summarise(
+      vl_contra = sum(vl_diferente, na.rm = TRUE),
+      vl_fact = sum(soma_mais, na.rm = TRUE)) %>%
+    ungroup() %>%
+    arrange(dt_last) %>%
+    mutate(
+      `Valor Que Seria Pago` = cumsum(vl_contra),
+      `Valor Que foi Pago` = cumsum(vl_fact)) %>%
+    gather(tipo_valor, valor, starts_with("Valor")) %>%
+    plot_ly(x=~dt_last,
+            y=~valor/1e6,
+            color =~tipo_valor,
+            text = ~paste0('</br> Data: ',dt_last,
+                           '</br> Valor: R$',format(round(as.numeric(valor),4),
+                                                    nsmall=1, big.mark=",",
+                                                    scientific = FALSE)),
+            hoverinfo = 'text',
+            type = 'scatter',
+            mode = 'lines+markers') %>%
+    layout(xaxis =list(title = 'Data'),
+           yaxis =list(title = 'Valor (em milhões)'),
+           legend = list(orientation = 'h', y = 1.1,x=0.5,xanchor = 'center'))
+  
+  # ggplot(aes(x = dt_last, y = valor/1e6, colour = tipo_valor)) +
+  # geom_line(size = 1.4) +
+  # geom_point(size = 2) +
+  # scale_y_continuous(labels = scales_real) +
+  # theme_minimal(12) +
+  # labs(x = "Data", y = "Valor (em milhões)", colour = "Cenário")
+  
+  valores2 <- gasto_se_nao_acordo %>%
+    select(tipo, soma_mais, vl_diferente, dt_last) %>%
+    group_by(dt_last) %>%
+    summarise(
+      vl_contra = sum(vl_diferente, na.rm = TRUE),
+      vl_fact = sum(soma_mais, na.rm = TRUE)) %>%
+    ungroup() %>%
+    arrange(dt_last) %>%
+    mutate(
+      `Valor Que Seria Pago` = cumsum(vl_contra),
+      `Valor Que foi Pago` = cumsum(vl_fact),
+      Razao = (`Valor Que Seria Pago` / `Valor Que foi Pago`)-1) %>%
+    plot_ly(x=~dt_last,
+            y=~Razao,
+            type = 'scatter',
+            mode = 'lines+markers',
+            hoverinfo = 'text',
+            text =~paste0('</br>Data: ',dt_last,
+                          '</br>Economia: ', Razao)) %>%
+    layout(xaxis = list(title = 'Data'),
+           yaxis =list(title ='Economia (%)',tickformat = '%'),
+           legend = list(orientation = 'h', y = 1.1,x=0.5,xanchor = 'center'))
+  
+  # ggplot(aes(x = dt_last, y = Razao)) +
+  # geom_line(size = 1.4) +
+  # geom_point(size = 2) +
+  # scale_y_continuous(labels = scales::percent, breaks = 0:100 * 5 / 100) +
+  # theme_minimal(12) +
+  # labs(x = "Data", y = "Economia (em %)", colour = "Tipo")
+  
+  if (tipo == "cenarios") valores1
+  else valores2
+}
+
+# sso --------------------------------------------------------------------------
+# Gerar gráfico de investimento trabalhista
+gerar_sso_plot <- function(tabela, mediana) {
+  
+  if(mediana) fun <- median else fun <- mean
+  
+  re_sso <- "MEDIC|SAUDE|SEGURO DE VIDA|ACID|INVA|ESTET|DOEN|MATER|VITAL"
+  tabela %>%
+    distinct(id_pedido, .keep_all = TRUE) %>%
+    filter(str_detect(objeto, re_sso)) %>%
+    group_by(cpf, numero_do_processo) %>%
+    summarise(valorr = sum(vl_contingencia_objeto, na.rm = TRUE)) %>%
+    ungroup() %>%
+    left_join(d_pessoas, "cpf") %>%
+    group_by(unidade) %>%
+    summarise(
+      qtd_processos = n(),
+      vl_processo = fun(valorr),
+      sso = sum(sso, na.rm = TRUE)) %>%
+    filter(!is.na(unidade)) %>%
+    replace_na(list(vl_processo = 0, qtd_processos = 0)) %>%
+    mutate(unidade = fct_reorder(unidade, sso)) %>%
+    gather(variavel, valor, -unidade) %>%
+    mutate(variavel = if_else(variavel == "sso", "Investimento", "Contingência")) %>%
+    plot_ly(x=~valor/1000,
+            y=~reorder(unidade,valor),
+            color = ~variavel,
+            type = 'bar',
+            orientation = 'h',
+            text =~paste0('</br>Unidade: ',unidade,
+                          '</br>Valor: R$',format(round(as.numeric(valor),4),
+                                                  nsmall=1, big.mark=",",
+                                                  scientific = FALSE),
+                          '</br>Tipo de gasto: ', variavel),
+            hoverinfo = 'text') %>%
+    layout(xaxis = list(title='Valor (R$ x 1000)'),
+           yaxis=list(title = paste0(c(rep("&nbsp;", 20),
+                                       'Unidade',
+                                       rep("&nbsp;", 20),
+                                       rep("\n&nbsp;", 3)),
+                                     collapse = "")),
+           legend = list(x = 0,
+                         y=1.05,
+                         xanchor = 'center',
+                         orientation = 'h',
+                         font = list(family = "sans-serif",
+                                     size = 11,
+                                     color = 'black')),
+           margin = list(t = 80,l=240))
+  
+  # ggplot(aes(x = unidade, y = valor/1000, fill = variavel)) +
+  # geom_col(position = "dodge") +
+  # theme_minimal(12) +
+  # coord_flip() +
+  # scale_y_continuous(labels = scales_real) +
+  # labs(y = "Valor (R$ x 1000)", x = "Unidade", fill = "Tipo de gasto")
+  
+}
+
+# pedidos ----------------------------------------------------------------------
+# Gerar gráfico de pedidos/ofensores
+gerar_po_plot <- function(tabela, risco, tipo) {
+  
+  lab <- switch (tipo,
+                 "qtde" = "Quantidade",
+                 "mediana" = "Valor Mediano",
+                 "valor" = "Valor Total",
+                 "propt" = "Porcentagem do Total",
+                 "propv" = "Porcentagem do Valor"
+  )
+  
+  p <- tabela %>%
+    filter(!is.na(id_contingencia), area == "TRABALHISTA") %>%
+    distinct(id_pedido, .keep_all = TRUE) %>%
+    filter(risco_do_pedido %in% risco) %>%
+    group_by(objeto) %>%
+    summarise(
+      qtde = n(),
+      mean = mean(vl_contingencia_objeto, na.rm = TRUE),
+      mediana = median(vl_contingencia_objeto, na.rm = TRUE),
+      valor = sum(vl_contingencia_objeto, na.rm = TRUE)) %>%
+    mutate(
+      propv = valor / sum(valor, na.rm = TRUE),
+      propt = qtde / sum(qtde, na.rm = TRUE)
+    ) %>%
+    gather(key, val, -objeto) %>%
+    filter(key == tipo) %>%
+    arrange(desc(val)) %>%
+    mutate(objeto = fct_reorder(objeto, val)) %>%
+    head(30)
+  
+  if (tipo == 'qtde') {
+    plot <- p %>%
+      plot_ly(x=~val,
+              y=~objeto,
+              type = 'bar',
+              height = 600,
+              orientation = 'h',
+              text =~paste0('</br>Pedido: ', objeto,
+                            '</br>',lab,': ',val),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title=lab),
+             yaxis = list(title =  paste0(c(rep("&nbsp;", 20),
+                                            'Pedido',
+                                            rep("&nbsp;", 20),
+                                            rep("\n&nbsp;", 3)),
+                                          collapse = "")),
+             margin = list(l=270))
+  } else if (tipo == 'mediana' | tipo == 'valor') {
+    filtro <- if_else(tipo == "mediana", 7e5, Inf)
+    plot <- p %>%
+      # HACK
+      filter(val < filtro) %>%
+      plot_ly(x=~val,
+              y=~objeto,
+              type = 'bar',
+              height = 600,
+              orientation = 'h',
+              text =~paste0('</br>Pedido: ', objeto,
+                            '</br>', lab, ': R$',
+                            format(round(as.numeric(val), 4),
+                                   nsmall = 1, big.mark = ",",
+                                   scientific = FALSE)),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title=lab),
+             yaxis = list(title =  paste0(c(rep("&nbsp;", 20),
+                                            'Pedido',
+                                            rep("&nbsp;", 20),
+                                            rep("\n&nbsp;", 3)),
+                                          collapse = "")),
+             margin = list(l=270))
+  } else if(tipo == 'propt' | tipo == 'propv'){
+    plot <- p %>%
+      plot_ly(x=~val,
+              y=~objeto,
+              type = 'bar',
+              height = 600,
+              orientation = 'h',
+              text =~paste0('</br>Pedido: ', objeto,
+                            '</br>',lab,': ',scales::percent(val)),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title=lab, tickformat = '%'),
+             yaxis = list(title =  paste0(c(rep("&nbsp;", 20),
+                                            'Pedido',
+                                            rep("&nbsp;", 20),
+                                            rep("\n&nbsp;", 3)),
+                                          collapse = "")),
+             margin = list(l=270))
+  }
+  plot
+}
+
+# qlp --------------------------------------------------------------------------
+# Gerar gráfico de risco trabalhista
+gerar_qlp_plot <- function(tabela) {
+  
+  hline <- function(y = 0, color = "red") {
+    list(
+      type = "line",
+      x0 = 0,
+      x1 = 1,
+      xref = "paper",
+      y0 = y,
+      y1 = y,
+      line = list(color = color),
+      showlegend = F
+    )
+  }
+  
+  tab <- tabela %>%
+    filter(!is.na(id_contingencia), area == "TRABALHISTA") %>%
+    distinct(id_contingencia, .keep_all = TRUE)
+  
+  p <- d_pessoas %>%
+    filter(!is.na(dt_demissao)) %>%
+    left_join(tab, "cpf") %>%
+    dplyr::mutate(mes_deslig = lubridate::floor_date(dt_demissao, "month")) %>%
+    dplyr::filter(lubridate::year(mes_deslig) >= 2015,
+                  mes_deslig <= "2018-02-01") %>%
+    dplyr::group_by(mes_deslig) %>%
+    dplyr::summarise(
+      n = n(),
+      tot_trab = sum(!is.na(numero_do_processo)),
+      prop_trab = tot_trab / n) %>%
+    complete(
+      mes_deslig = as.Date("2015-01-01") + base::months(0:(nrow(.)-1)),
+      fill = list(n = 0, prop_trab = 0)) %>%
+    mutate(prop_tot = sum(tot_trab) / sum(n)) %>%
+    mutate(lab = scales::percent(prop_trab))
+  
+  plot <- p %>%
+    plot_ly(x=~mes_deslig,
+            y=~prop_trab,
+            type = 'scatter',
+            mode = 'lines+markers',
+            text =~paste0('</br> Data: ', mes_deslig,
+                          '</br> Proporção: ', scales::percent(prop_trab)),
+            hoverinfo = 'text') %>%
+    layout(shapes = list(hline(p$prop_tot[1])),
+           yaxis = list(title = "Processos / demissões",
+                        tickformat = '%'),
+           xaxis = list(title = 'Data (mês)'))
+  
+  plot
+  
+}
+
+# pedidos no tempo -------------------------------------------------------------
+# Gerar gráfico de pedidos/ofensores por trimestre
+gerar_pot_plot <- function(tabela, risco, ano, tipo) {
+  
+  objetos <- c(
+    "HORAS EXTRAS",
+    "DANOS MORAIS",
+    "FGTS",
+    "HONORARIOS ADVOCATICIOS",
+    "INTERVALO INTRAJORNADA",
+    "ADICIONAL DE INSALUBRIDADE",
+    "MULTA ART 477",
+    "FERIAS"
+  )
+  
+  lab <- switch (tipo,
+                 "qtde" = "Quantidade",
+                 "mediana" = "Valor Mediano",
+                 "valor" = "Valor Total",
+                 "propt" = "Porcentagem do Total",
+                 "propv" = "Porcentagem do Valor"
+  )
+  
+  p <- tabela %>%
+    distinct(id_pedido, .keep_all = TRUE) %>%
+    mutate(
+      data = lubridate::floor_date(dt_entrada, "quarter"),
+      year = lubridate::year(data)
+    ) %>%
+    filter(risco_do_pedido %in% risco, !is.na(dt_entrada), year == ano) %>%
+    filter(data >= "2015-01-01", data < "2018-01-01") %>%
+    select(-year) %>%
+    group_by(data, objeto) %>%
+    summarise(
+      qtde = n(),
+      mean = mean(vl_contingencia_objeto, na.rm = TRUE),
+      mediana = median(vl_contingencia_objeto, na.rm = TRUE),
+      valor = sum(vl_contingencia_objeto, na.rm = TRUE)
+    ) %>%
+    mutate(
+      propv = valor / sum(valor, na.rm = TRUE),
+      propt = qtde / sum(qtde, na.rm = TRUE)
+    ) %>%
+    group_by(objeto) %>%
+    mutate(ntot = sum(qtde)) %>%
+    ungroup() %>%
+    filter(objeto %in% objetos) %>%
+    gather(key, val, -objeto, -data) %>%
+    filter(key == tipo) %>%
+    arrange(desc(val)) %>%
+    mutate(Pedido = fct_reorder(objeto, val)) %>%
+    mutate(data = as.Date(data)) %>%
+    arrange(data)
+  
+  if (tipo == 'qtde') {
+    plot <- p %>%
+      plot_ly(x=~data,
+              y=~val,
+              height = 400,
+              color = ~Pedido,
+              type = 'scatter',
+              mode = 'lines',
+              text = ~paste0('</br>Data: ', data,
+                             '</br>',lab,': ', val,
+                             '</br>Pedido: ', Pedido),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title = 'Trimeste'),
+             yaxis = list(title = lab),
+             legend = list(y=-0.5,orientation = 'h',
+                           font = list(family = "sans-serif",
+                                       size = 9,
+                                       color = 'black')))
+    
+  } else if (tipo == 'mediana' | tipo == 'valor') {
+    
+    plot <- p %>%
+      plot_ly(x=~data,
+              y=~val,
+              height = 400,
+              color =~Pedido,
+              type = 'scatter',
+              mode = 'lines',
+              text = ~paste0('</br>Data: ', data,
+                             '</br>',lab,': R$',
+                             format(round(as.numeric(val), 4),
+                                    nsmall=1, big.mark = ",",
+                                    scientific = FALSE),
+                             '</br>Pedido: ', Pedido),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title = 'Trimeste'),
+             yaxis = list(title = lab),
+             legend = list(y=-0.5,orientation = 'h',
+                           font = list(family = "sans-serif",
+                                       size = 9,
+                                       color = 'black')))
+  } else if(tipo == 'propt' | tipo == 'propv') {
+    plot <- p %>%
+      plot_ly(x=~data,
+              y=~val,
+              height = 400,
+              color =~Pedido,
+              type = 'scatter',
+              mode = 'lines',
+              text = ~paste0('</br>Data: ', data,
+                             '</br>',lab,': ',scales::percent(val),
+                             '</br>Pedido: ', Pedido),
+              hoverinfo = 'text') %>%
+      layout(xaxis = list(title = 'Trimeste'),
+             yaxis = list(title = lab),
+             legend = list(y=-0.5,orientation = 'h',
+                           font = list(family = "sans-serif",
+                                       size = 9,
+                                       color = 'black')))
+  }
+  
+  plot
+}
+
+# mapas ------------------------------------------------------------------------
+# Gerar mapa
+gerar_mapa <- function(tabela, area_map = "Administrativo") {
+  d_map <- tabela %>%
+    filter(!is.na(id_contingencia), status == "Ativo") %>%
+    distinct(id_contingencia, .keep_all = TRUE) %>%
+    filter(area == area_map)
+  tile <- "http://{s}.tiles.mapbox.com/v3/jtrecenti.map-oskm8vhn/{z}/{x}/{y}.png"
+  d_map %>%
+    filter(!is.na(lat)) %>%
+    mutate(
+      label = glue::glue(
+        "<b>Processo</b>: {numero_do_processo}<br/>",
+        "<b>Objeto</b>: {objeto}<br/>",
+        "<b>Acompanhamento</b>: {acompanhamento}<br/>",
+        "<b>Polo ativo</b>: {parte_ativa}<br/>",
+        "<b>Fase</b>: {fase}<br/>",
+        "<b>Probabilidade de perda</b>: {risco_do_processo}<br/>",
+        "<b>Valor contingencia</b>: {scales::dollar(vl_contingencia_processo)}<br/>"
+      )
+    ) %>%
+    leaflet() %>%
+    addTiles(tile) %>%
+    addMarkers(popup = ~label, clusterOptions = markerClusterOptions())
+}
+

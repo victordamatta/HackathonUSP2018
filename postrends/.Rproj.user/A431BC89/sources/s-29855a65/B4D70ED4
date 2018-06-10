@@ -1,0 +1,23 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1527789333601.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "B4D70ED4",
+    "lastKnownWriteTime" : 1526253515,
+    "last_content_update" : 1526253515,
+    "path" : "/srv/shiny-server/carf/server.R",
+    "project_path" : "server.R",
+    "properties" : {
+        "cursorPosition" : "37,35",
+        "scrollLine" : "0",
+        "tempName" : "Untitled2"
+    },
+    "relative_order" : 4,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

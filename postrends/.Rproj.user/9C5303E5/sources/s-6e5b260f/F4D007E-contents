@@ -1,0 +1,530 @@
+
+# GERAL -------------------------------------------------------------------
+
+# shiny::runApp(launch.browser = TRUE)
+
+# shiny::runApp(launch.browser = TRUE)
+setwd("/srv/shiny-server/estre/")
+
+# Carregar módulos
+source("modules.R")
+
+# Bibliotecas e caminhos
+library(forcats)
+library(stringr)
+library(magrittr)
+library(tidyverse)
+library(shiny)
+library(shinydashboard)
+library(shinycssloaders)
+library(leaflet)
+library(plotly)
+library(shinyBS)
+
+# Atalho para purrr::`%||%`
+`%||%` <- purrr::`%||%`
+
+# Upload de arquivos
+options(shiny.maxRequestSize=10*1024^2)
+
+
+
+# TRATAMENTO --------------------------------------------------------------
+
+# Carregar todas as bases necessárias
+load("data/d_processos.rda")
+load("data/d_pessoas.rda")
+load("data/d_iad.rda")
+load("data/d_tc.rda")
+
+
+
+# TEMPLATES ---------------------------------------------------------------
+
+# Remover NAs
+unq <- function(x) { unique(x)[!is.na(unique(x))] }
+
+# Auxiliares para os filtros
+business_ <- unq(d_processos$business) %>% sort
+unidades_ <- unq(d_processos$unidade) %>% sort
+unidades_[length(unidades_)+1] <- 'Todas'
+
+acompanhamentos_ <- unq(d_processos$acompanhamento)
+esferas_ <- unq(d_processos$esfera)
+areas_ <- unq(d_processos$area)
+
+# Auxiliar para escolhas condicionais
+escolhas_cond <- c("business", "unidade", "area", "acompanhamento")
+escolhas_risco <- unq(d_processos$risco_do_processo)
+escolhas_ano <- c("2015", "2016", "2017")
+
+# Template para checkbox
+cnj_tmplt <- function(id) {
+  checkboxInput(id, "Adicionar CNJ?", TRUE)
+}
+
+# Template para select input
+risco_tmplt <- function(id) {
+  selectInput(
+    id, "Probabilidade de perda",
+    choices = escolhas_risco,
+    selected = escolhas_risco, multiple = TRUE)
+}
+
+# Template para select input
+ano_tmplt <- function(id) {
+  selectInput(
+    id, "Ano", choices = escolhas_ano,
+    selected = 2017, multiple = FALSE)
+}
+
+
+add_tooltip_new <- function(el,title,content,placement,style = "font-size: 18px; width: 50px;"){
+  tags$div(
+    shinyBS::popify(el,title,content,placement,options=list(container="body")),
+    style = style
+  )
+}
+
+# Logged = FALSE
+my_username <- c("test", 'admin')
+my_password <- c("test", 'admin')
+
+# INTERFACE ---------------------------------------------------------------
+
+# Interface de Usuário
+ui <- dashboardPage(
+  
+  # Cabeçalho
+  dashboardHeader(
+    title = "Estre"),
+  
+  # Barra lateral
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Principal", tabName = "main_tab", icon = icon("home")),
+      menuItem("Trabalhista", tabName = "trabalhista_tab", icon = icon("black-tie")),
+      menuItem("Administrativo", tabName = "administrativo_tab", icon = icon("briefcase")),
+      menuItem("Ambiental", tabName = "ambiental_tab", icon = icon("briefcase")),
+      menuItem("Upload", tabName = "upload_tab", icon = icon("upload"))),
+    fluidRow(
+      checkboxInput("mediana_sel", "Usar Medianas?", value = TRUE),
+      selectizeInput("acompanhamentos_sel", "Acompanhamento",'',multiple = TRUE),
+      selectizeInput("areas_sel", "Área do Direito",'',multiple = TRUE),
+      selectizeInput("business_sel", "Business",'',multiple = TRUE),
+      selectizeInput("unidades_sel", "Unidade",'',multiple = FALSE),
+      gerar_mes_referencia(d_processos))),
+  
+  # Corpo do dash e suas abas
+  dashboardBody(
+    tabItems(
+      # Aba principal
+      tabItem(
+        tabName = "main_tab",
+        
+        # Caixas com valores
+        fluidRow(
+          valueBox(uiOutput("ticket_box") %>% withSpinner(size = getOption("spinner.size", default = 0.8), proxy.height = '150px'), "Ticket trabalhista", width = 2, color = "navy"),
+          valueBox(uiOutput("qtde_box") %>% withSpinner(size = getOption("spinner.size", default = 0.8), proxy.height = '150px'), "Processos ativos", width = 2),
+          valueBox(uiOutput("provisao_box") %>% withSpinner(size = getOption("spinner.size", default = 0.8), proxy.height = '150px'), "Provisão", width = 3, color = "lime"),
+          valueBox(uiOutput("ctgcia_box") %>% withSpinner(size = getOption("spinner.size", default = 0.8), proxy.height = '150px'), "Contingência total", width = 3, color = "red"),
+          valueBox(uiOutput("ctgcia_proc_box") %>% withSpinner(size = getOption("spinner.size", default = 0.8), proxy.height = '150px'), "Contingência / processo", width = 2, color = "red")),
+        
+        # Mostrar valores quebrados
+        checkboxInput("quebrados", "Mostrar valores quebrados?"),
+        
+        # Painel condicional
+        conditionalPanel(
+          condition = "input.quebrados",
+          fluidRow(
+            column(2, selectInput("quebra", "Quebrar por:", escolhas_cond, "business", FALSE)),
+            column(2, tableOutput("qtde_cond"), tags$head(tags$style("#qtde_cond table {background-color: #4da6ff; }", media="screen", type="text/css"))),
+            column(3, tableOutput("provisao_cond"), tags$head(tags$style("#provisao_cond table {background-color: #4dff4d; }", media="screen", type="text/css"))),
+            column(3, tableOutput("ctgcia_cond"), tags$head(tags$style("#ctgcia_cond table {background-color: #ff3333; }", media="screen", type="text/css"))),
+            column(2, tableOutput("ctgcia_proc_cond"), tags$head(tags$style("#ctgcia_proc_cond table {background-color: #ff3333; }", media="screen", type="text/css"))))),
+        
+        # Primeira linha da aba
+        fluidRow(
+          tabBox(
+            title = "Vazão", height = 600,
+            tabPanel("Índice Atendimento à Demanda", cnj_tmplt("iad_cnj"), plotlyOutput("iad_plot") %>% withSpinner()),
+            tabPanel("Taxa de Congestionamento", cnj_tmplt("txc_cnj"), plotlyOutput("txc_plot") %>% withSpinner()),
+            tabPanel("Estoque", plotlyOutput("vazao_plot") %>% withSpinner())),
+          box("Projeção de Pagamentos", plotlyOutput("projecao_plot") %>% withSpinner(), height = 600)),
+        
+        # Segunda linha da aba
+        fluidRow(
+          tabBox(
+            title = "Eficiência Unidade e Business", height = 600,
+            tabPanel("Business", risco_tmplt("rank_bus_risco"), plotlyOutput("rank_bus_plot") %>% withSpinner()),
+            tabPanel("Unidades", risco_tmplt("rank_uni_risco"), plotlyOutput("rank_uni_plot") %>% withSpinner())),
+          tabBox(
+            title = "Estratégia de Acordos", height = 600,
+            tabPanel("Hipotético e Real", plotlyOutput("cenarios_plot") %>% withSpinner()),
+            tabPanel("Razão Entre Cenários", plotlyOutput("razao_plot") %>% withSpinner())))),
+      
+      # Aba trabalhista
+      tabItem(
+        tabName = "trabalhista_tab",
+        
+        # Primeira linha da aba
+        fluidRow(
+          box(
+            "Investimentos em Segurança do Trabalho x Valores dos Processos",
+            plotlyOutput("sso_plot", height = 800) %>% withSpinner()),
+          tabBox(
+            title = "Pedidos Mais Frequentes", height = 800,
+            tabPanel("Quantidade", risco_tmplt("po_qdte_risco"), plotlyOutput("po_qdte_plot") %>% withSpinner()),
+            tabPanel("Valor mediano", risco_tmplt("po_mediana_risco"), plotlyOutput("po_mediana_plot") %>% withSpinner()),
+            tabPanel("Valor total", risco_tmplt("po_valor_risco"), plotlyOutput("po_valor_plot") %>% withSpinner()),
+            tabPanel("% do total", risco_tmplt("po_propt_risco"), plotlyOutput("po_propt_plot") %>% withSpinner()),
+            tabPanel("% do valor total", risco_tmplt("po_propv_risco"), plotlyOutput("po_porpv_plot") %>% withSpinner()))
+        ),
+        
+        # Segunda linha da aba
+        fluidRow(
+          box(title = "Risco trabalhista", plotlyOutput("qlp_plot") %>% withSpinner()),
+          tabBox(
+            title = "Pedidos Mais Frequentes por Trimestre",
+            tabPanel("Quantidade", risco_tmplt("pot_qtde_risco"), ano_tmplt("pot_qtde_ano"), plotlyOutput("pot_qtde_plot") %>% withSpinner()),
+            tabPanel("Valor mediano", risco_tmplt("pot_mediana_risco"), ano_tmplt("pot_mediana_ano"), plotlyOutput("pot_mediana_plot") %>% withSpinner()),
+            tabPanel("Valor total", risco_tmplt("pot_valor_risco"), ano_tmplt("pot_valor_ano"), plotlyOutput("pot_valor_plot") %>% withSpinner()),
+            tabPanel("% do total", risco_tmplt("pot_propt_risco"), ano_tmplt("pot_propt_ano"), plotlyOutput("pot_propt_plot") %>% withSpinner()),
+            tabPanel("% do valor total", risco_tmplt("pot_propv_risco"), ano_tmplt("pot_propv_ano"), plotlyOutput("pot_propv_plot") %>% withSpinner())))
+      ),
+      
+      tabItem(tabName = "ambiental_tab",
+              leafletOutput("mapa_ambiental", height = 600)
+      ),
+      
+      tabItem(tabName = "administrativo_tab",
+              leafletOutput("mapa_administrativo", height = 600)
+      )
+      
+    ))
+)
+
+
+
+# SERVIDOR ----------------------------------------------------------------
+
+# Define server logic required to draw a histogram
+server <- function(input, output, session) {
+  
+  
+  values <- reactiveValues(authenticated = FALSE)
+  
+  # Return the UI for a modal dialog with data selection input. If 'failed'
+  # is TRUE, then display a message that the previous value was invalid.
+  dataModal <- function(failed = FALSE) {
+    modalDialog(
+      textInput("username", "Usuário:"),
+      passwordInput("password", "Senha:"),
+      if(failed)  div(tags$b("Usuário e/ou senha incorreto(s)", style = "color: red;")),
+      footer = tagList(
+        # modalButton("Cancel"),
+        actionButton("ok", "Entrar")
+      ),
+      size = 's'
+    )
+  }
+  
+  # Show modal when button is clicked.
+  # This `observe` is suspended only whith right user credential
+  
+  obs1 <- observe({
+    showModal(dataModal())
+  })
+  
+  # When OK button is pressed, attempt to authenticate. If successful,
+  # remove the modal.
+  
+  obs2 <- observe({
+    req(input$ok)
+    isolate({
+      Username <- input$username
+      Password <- input$password
+    })
+    Id.username <- which(my_username == Username)
+    Id.password <- which(my_password == Password)
+    if (length(Id.username) > 0 & length(Id.password) > 0) {
+      if (Id.username == Id.password) {
+        # Logged <<- TRUE
+        values$authenticated <- TRUE
+        # obs1$suspend()
+        removeModal()
+        
+      } else {
+        showModal(dataModal(failed = TRUE))
+        # values$authenticated <- FALSE
+      }
+    }
+  })
+  #Atualizar sidebar
+  observe({
+    validate(need(values$authenticated, 'Entre com o usuário e senha'))
+    
+    updateSelectizeInput(session,
+                         'acompanhamentos_sel',
+                         choices = acompanhamentos_,
+                         selected = acompanhamentos_
+    )
+    
+    updateSelectizeInput(session,
+                         'areas_sel',
+                         choices = areas_,
+                         selected = areas_
+    )
+    
+    updateSelectizeInput(session,
+                         'business_sel',
+                         choices = business_,
+                         selected = business_
+    )
+    
+    updateSelectizeInput(session,
+                         'unidades_sel',
+                         choices = unidades_,
+                         selected = 'Todas'
+    )
+    
+  })
+  
+  # Aplicar filtros nos dados
+  d_processos_reactive <- reactive({
+    validate(need(values$authenticated, 'Entre com o usuário e senha'))
+    
+    if(input$unidades_sel == 'Todas') {
+      unidades_sel <- unidades_[-length(unidades_)]
+    } else
+      unidades_sel <- input$unidades_sel
+    
+    
+    d_processos %>% filter(
+      is.na(business) | business %in% (input$business_sel %||% business_),
+      is.na(unidade) | unidade %in% (unidades_sel %||% unidades_),
+      is.na(acompanhamento) | acompanhamento %in% (input$acompanhamentos_sel %||% acompanhamentos_),
+      is.na(esfera) | esfera == 'Judicial',
+      # is.na(esfera) | esfera %in% (input$esferas_sel %||% esferas_),
+      is.na(area) | area %in% (input$areas_sel %||% areas_))
+    
+  })
+  
+  d_processos_trab_reactive <- reactive({
+    validate(need(values$authenticated, 'Entre com o usuário e senha'))
+    
+    if(input$unidades_sel == 'Todas') {
+      unidades_sel <- unidades_[-length(unidades_)]
+    } else
+      unidades_sel <- input$unidades_sel
+    
+    
+    d_processos %>% filter(
+      is.na(business) | business %in% (input$business_sel %||% business_),
+      is.na(unidade) | unidade %in% (unidades_sel %||% unidades_),
+      is.na(acompanhamento) | acompanhamento %in% (input$acompanhamentos_sel %||% acompanhamentos_),
+      is.na(esfera) | esfera == 'Judicial')
+    
+  })
+  
+  # Saídas das caixas
+  output$ticket_box <- renderUI({
+    plot <- try(gerar_box(d_processos_trab_reactive(), "ticket", input$mediana_sel))
+    
+    
+    
+    
+    validate(need(plot, 'Não disponível'))
+    
+    tags$p(HTML(plot),style ="font-size: 82%;")})
+  
+  output$qtde_box <- renderUI({
+    plot <- try(gerar_box(d_processos_reactive(), "qtde"))
+    
+    validate(need(plot, 'Não disponível'))
+    
+    HTML(plot)})
+  
+  output$provisao_box <- renderUI({
+    plot <- try(gerar_box(d_processos_reactive(), "provisao"))
+    
+    validate(need(plot, 'Não disponível'))
+    
+    HTML(plot)})
+  
+  output$ctgcia_box <- renderUI({
+    plot <- try(gerar_box(d_processos_reactive(), "ctgcia"))
+    
+    validate(need(plot, 'Não disponível'))
+    
+    tags$p(HTML(plot),style ="font-size: 80%;")})
+  
+  output$ctgcia_proc_box <- renderUI({
+    plot <- try(gerar_box(d_processos_reactive(), "ctgcia_proc"))
+    
+    validate(need(plot, 'Não disponível'))
+    
+    
+    tags$p(HTML(plot),style ="font-size: 70%;")})
+  
+  # Saídas do painel condicional
+  output$qtde_cond <- renderTable({gerar_cond(d_processos_reactive(), input$quebra, "qtde")})
+  output$provisao_cond <- renderTable({gerar_cond(d_processos_reactive(), input$quebra, "provisao")})
+  output$ctgcia_cond <- renderTable({gerar_cond(d_processos_reactive(), input$quebra, "ctgcia")})
+  output$ctgcia_proc_cond <- renderTable({gerar_cond(d_processos_reactive(), input$quebra, "ctgcia_proc")})
+  
+  # Saídas do painel vazão
+  output$iad_plot <- renderPlotly({
+    plot <- try(gerar_iad_plot(d_processos_reactive(), input$iad_cnj))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$txc_plot <- renderPlotly({
+    plot <- try(gerar_txc_plot(d_processos_reactive(), input$txc_cnj))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$vazao_plot <- renderPlotly({
+    plot <- try(gerar_vazao_plot(d_processos_reactive()))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saída do painel de projeção
+  output$projecao_plot <- renderPlotly({
+    plot <- try(gerar_projecao_plot(d_processos_reactive()))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saídas do painel de ranking
+  output$rank_bus_plot <- renderPlotly({
+    plot <- try(gerar_rank_bus_plot(d_processos_reactive(), input$rank_bus_risco))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$rank_uni_plot <- renderPlotly({
+    plot <- try(gerar_rank_uni_plot(d_processos_reactive(), input$rank_uni_risco))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saídas do painel de cenários
+  output$cenarios_plot <- renderPlotly({
+    plot<- try(gerar_cenarios_plot(d_processos_reactive(), "cenarios"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$razao_plot <- renderPlotly({
+    plot <- try(gerar_cenarios_plot(d_processos_reactive(), "razao"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$sso_plot <- renderPlotly({
+    plot <- try(gerar_sso_plot(d_processos_reactive(), input$mediana_sel))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saídas do painel de pedidos/ofensores
+  output$po_qdte_plot <- renderPlotly({
+    plot<- try(gerar_po_plot(d_processos_reactive(), input$po_qdte_risco, "qtde"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$po_mediana_plot <- renderPlotly({
+    plot<- try(gerar_po_plot(d_processos_reactive(), input$po_mediana_risco, "mediana"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$po_valor_plot <- renderPlotly({
+    plot <- try(gerar_po_plot(d_processos_reactive(), input$po_valor_risco, "valor"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$po_propt_plot <- renderPlotly({
+    plot <- try(gerar_po_plot(d_processos_reactive(), input$po_propt_risco, "propt"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$po_porpv_plot <- renderPlotly({
+    plot <- try(gerar_po_plot(d_processos_reactive(), input$po_propv_risco, "propv"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saída do painel de risco trabalhista
+  output$qlp_plot <- renderPlotly({
+    plot <- try(gerar_qlp_plot(d_processos_reactive()))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saídas do painel de pedidos/ofensores por trimestre
+  output$pot_qtde_plot <- renderPlotly({
+    plot <- try(gerar_pot_plot(d_processos_reactive(), input$pot_qtde_risco, input$pot_qtde_ano, "qtde"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$pot_mediana_plot <- renderPlotly({
+    plot <- try(gerar_pot_plot(d_processos_reactive(), input$pot_mediana_risco, input$pot_mediana_ano, "mediana"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$pot_valor_plot <- renderPlotly({
+    plot <- try(gerar_pot_plot(d_processos_reactive(), input$pot_valor_risco, input$pot_valor_ano, "valor"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$pot_propt_plot <- renderPlotly({
+    plot <- try(gerar_pot_plot(d_processos_reactive(), input$pot_propt_risco, input$pot_propt_ano, "propt"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  output$pot_propv_plot <- renderPlotly({
+    plot <- try(gerar_pot_plot(d_processos_reactive(), input$pot_propv_risco, input$pot_propv_ano, "propv"))
+    
+    validate(need(plot,'Não foi possível gerar o gráfico com as especificações selecionadas'))
+    
+    plot})
+  
+  # Saídas do painel mapas
+  output$mapa_administrativo <- renderLeaflet({gerar_mapa(d_processos_reactive(), "Administrativo")})
+  output$mapa_ambiental <- renderLeaflet({gerar_mapa(d_processos_reactive(), "Ambiental")})
+  
+}
+
+# Rodar o app
+shinyApp(ui = ui, server = server)

@@ -1,0 +1,37 @@
+library(magrittr)
+d_vis <- readr::read_rds("data/d_vis.rds")
+
+clean_txt <- function(txt) {
+  txt %>% 
+    stringr::str_to_upper() %>% 
+    abjutils::rm_accent() %>% 
+    stringr::str_replace_all("[[:space:]]+", " ") %>% 
+    stringr::str_squish() %>% 
+    stringr::str_replace_all("[^0-9A-Z ]", " ") %>% 
+    stringr::str_squish()
+}
+
+create_tdm <- function(d_vis) {
+  # paste all character columns 
+  d_txt <- d_vis %>% 
+    dplyr::mutate(txt = paste(txt_ementa, txt_decisao, contribuinte,
+                              relator, tipo_pessoa, votacao, resultado,
+                              tributos, camara_turma)) %>% 
+    dplyr::select(rowname, txt)
+  # create document term matrix
+  d_txt %>% 
+    dplyr::mutate(txt = clean_txt(txt)) %>% 
+    
+  texto %>% 
+    tibble::enframe() %>% 
+    tidytext::unnest_tokens(word, value, to_lower = FALSE) %>% 
+    # dplyr::anti_join(tidytext::get_stopwords("pt"), "word") %>% 
+    dplyr::count(rowname, word, sort = TRUE) %>% 
+    tidytext::bind_tf_idf(word, rowname, n) %>% 
+    dplyr::arrange(dplyr::desc(tf_idf)) %>% 
+    dplyr::select(-tf, -idf)
+}
+
+tdm <- create_tdm(d_vis)
+readr::write_rds(tdm, "data/new_tdm.rds")
+

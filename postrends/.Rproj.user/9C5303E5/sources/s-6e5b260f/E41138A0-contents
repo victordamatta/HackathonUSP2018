@@ -1,0 +1,259 @@
+#_______________________________________________________________________________
+header <- dashboardHeader(
+  title = tags$span('VisCARF', tags$sup('beta')),
+  tags$li(class = 'dropdown', 
+          style = 'position:absolute;left:40%;top:0px;height:100%'
+          #           tags$span(
+          #             tags$a(tags$img(src = 'logoab3j.png', style = "height:100%;"), 
+          #                    href = 'http://abjur.org.br', target = '_blank'
+          #             ))
+  )
+)
+
+#_______________________________________________________________________________
+sidebar <- dashboardSidebar(
+  sidebarMenu(
+    # Setting id makes input$tabs give the tabName of currently-selected tab
+    id = "tabs",
+    searchInput('query','Busca: ', 
+                placeholder = 'Digite sua busca',
+                btnSearch = icon("search"), 
+                btnReset = icon("remove"), 
+                width = "100%"),
+    menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard")),
+    menuItem("Turmas / Seções", tabName = "turmas", icon = icon("balance-scale")),
+    menuItem("Tributos", tabName = "tributos", icon = icon("dollar")),
+    menuItem("Conselheiros", tabName = "conselheiros", icon = icon("users")),
+    menuItem("Busca avançada", tabName = "busca", icon = icon("search")),
+    menuItem("Predição", tabName = "modelo", icon = icon("fa fa-dot-circle-o"))
+  ),
+  
+  dateRangeInput('corte', 'Data de publicação entre',
+                 format = 'dd/mm/yyyy',
+                 language = 'pt-BR',
+                 separator = ' e '),
+  
+  tags$div(class = 'especial',
+           selectizeInput('origem',
+                          label = 'UFs de origem', 
+                          choices = ufs, 
+                          selected = ufs, 
+                          multiple = TRUE),
+           tags$style(type = 'text/css',
+                      HTML(".especial > div > div > div > div.selectize-input {
+                           max-height:60px;
+                           }")))
+  
+                      )
+
+
+
+# tags$style(type = 'text/css', 
+#            HTML(".especial > div > div > div > div.selectize-dropdown {
+#                   max-height:70px;overflow-y:scroll;
+#                 }")),
+# style = 'position: absolute;bottom:30%;left:0;width:100%')
+
+
+#_______________________________________________________________________________
+dash <- tabItem(
+  tabName = 'dashboard',
+  
+  fluidRow(
+    valueBoxOutput('processos', width = 3),
+    valueBoxOutput('decisoes', width = 3),
+    valueBoxOutput('foo', width = 3),
+    valueBoxOutput('bar', width = 3),
+    valueBoxOutput('baz', width = 3),
+    valueBoxOutput('qux', width = 3)
+  ),
+  
+  fluidRow(
+    
+    box(title = 'Controles', width = 12, solidHeader = TRUE,
+        background = 'light-blue',
+        
+        column(3,selectInput(inputId ='res', label = 'Informação',
+                             choices = c('Resultados', 'Volume processual'),
+                             selected ='Volume processual'),
+               conditionalPanel(condition = "input.res == 'Resultados' & input.quebra != 'Nada'",
+                                selectizeInput("tipo_res", "Selecione o resultado desejado",
+                                               choices = '',
+                                               selected = 'DESFAVORAVEL',
+                                               multiple = FALSE))),
+        
+        column(3,selectInput(inputId = 'quebra', label = 'Quebrar por',
+                             choices =  c('Nada' = 'Nada', 
+                                          'Seção de julgamento' = 'secao', 
+                                          'Votacao' = 'votacao',
+                                          'Tipo de pessoa' = 'tipo_pessoa',
+                                          'Tipo de relator' = 'tipo')),
+               selected = 'Nada'),
+        br(),
+        checkboxInput('stack', 'Empilhar?', FALSE)),
+    
+    tabBox(id = 'grafs_tempo', 
+           title = h5("Evolução do volume de decisoes"), 
+           width = 7,
+           tabPanel(
+             'Volume mensal', 
+             dygraphOutput('graf_tempo_mes')
+           ),
+           tabPanel(
+             'Proporção acumulada', 
+             dygraphOutput('graf_tempo_acu')
+           ),
+           tabPanel(
+             'Barras', 
+             plotlyOutput('graf_barras')
+           )),
+    box(title = "Mapa", collapsible = TRUE, width = 5, collapsed = FALSE,
+        leafletOutput('mapa')
+    ),
+    
+    box(title = 'Últimas decisões', 
+        collapsible = TRUE, 
+        width = 12,
+        collapsed = FALSE,
+        DT::dataTableOutput("ultimos"))
+  )
+)
+
+turm <- tabItem(
+  tabName = 'turmas',
+  fluidRow(
+    box(title = 'Controles', width = 12,
+        column(4,
+               selectizeInput('secao', 'Seçao de julgamento', secoes)),
+        
+        column(4,
+               selectizeInput('camara', 'Camara', camaras)),
+        
+        column(4,
+               selectizeInput('turma', 'Turma', turmas))
+    )
+  ),
+  fluidRow(
+    tabBox(id = 'grafs_tempo_turma_sec',
+           title = 'Resultados - Turmas/Seções',
+           width = 12,
+
+           tabPanel('Resultado geral por turma e câmara',
+                    plotlyOutput('graf_turmas')
+                    ),
+
+           tabPanel('Resultado por turma e câmara no tempo',
+                    plotlyOutput('graf_turmas_tempo')
+                    )
+           )
+  )
+)
+
+trib <- tabItem(
+  tabName = 'tributos',
+  fluidRow(
+    box(title = 'Proporção de decisões por tributo', width = 12, solidHeader = TRUE,
+        plotlyOutput('graftrib_trib')
+    )),
+  
+  fluidRow(
+    # box(title = 'Decisões por tributo', tableOutput('tabtrib'), width = 2),
+    box(title = 'Proporção de decisões por combinações de tributos', width = 12, 
+        # selectizeInput(
+        #   inputId = "seltrib", 
+        #   label = "Selecione a pariodicidade da análise: ", 
+        #   choices = c('Diário', 'Mensal','Anual','Tudo'), options = list(`actions-box` = TRUE), 
+        #   multiple = F,
+        #   width = '25%'
+        # ),
+        plotlyOutput('graftrib_doc'))
+  )
+)
+
+
+cons <- tabItem(
+  tabName = 'conselheiros',
+  fluidRow(
+    # box(title = "Controle", width = 2,
+    #     sliderInput('cortar', 'Cortar', min = 1, max = 300, value = 150, step = 1)),
+    box(title = "Resultados dos conselheiros",
+        width = 12, 
+        sliderInput('cortar', 'Selecione a representatividade do relator em relação à quantidade de documentos', min = 1, max = 1000, value = 150, step = 1),
+        DT::dataTableOutput('tab_conselheiros'))
+  )
+)
+
+busc <- tabItem(
+  tabName = 'busca',
+  fluidRow(
+    box(title = 'Busca avançada', width = 12,
+        column(3,
+               selectInput("b_tipo_recurso", "Tipo Recurso", unique(d_vis[['tipo_recurso']]), '', multiple = TRUE),
+               textInput("b_contribuinte", "Contribuinte"),
+               textInput("b_relator", "Relator"),
+               selectInput("b_secao", "Secao", unique(d_vis[['secao']]), '', multiple = TRUE)
+        ),
+        column(3,
+               textInput("b_txt_ementa", "Txt Ementa"),
+               textInput("b_txt_decisao", "Txt Decisao"),
+               dateRangeInput('b_data_pub', 'Data de publicação entre',
+                              format = 'dd/mm/yyyy', 
+                              language = 'pt-BR',
+                              separator = ' e '),
+               selectInput("b_camara", "Camara", unique(d_vis[['camara']]), '', multiple = TRUE)
+        ),
+        column(3,
+               selectInput("b_tipo_pessoa", "Tipo Pessoa", unique(d_vis[['tipo_pessoa']]), '', multiple = TRUE),
+               selectInput("b_uf", "Uf", unique(d_vis[['uf']]), '', multiple = TRUE),
+               selectInput("b_votacao", "Votacao", unique(d_vis[['votacao']]), '', multiple = TRUE),
+               selectInput("b_turma", "Turma", unique(d_vis[['turma']]), '', multiple = TRUE)
+        ),
+        column(3,
+               selectInput("b_resultado", "Resultado", unique(d_vis[['resultado']]), '', multiple = TRUE),
+               selectInput("b_tributos", "Tributos", unique(d_vis[['tributos']]), '', multiple = TRUE),
+               selectInput("b_tipo", "Tipo de Relator", unique(d_vis[['tipo']]), '', multiple = TRUE),
+               actionButton('b_pesquisa', 'Pesquisar')
+        )
+    )
+  ),
+  fluidRow(
+    box(title = "Resultados", width = 12,
+        downloadButton('download', 'Download'),
+        # textInput('query', 'Query', width = '80%', placeholder = 'e.g. itau unibanco.'),
+        # actionButton('botao', 'Pesquisar!', width = '10%'),
+        tags$div(DT::dataTableOutput('rbusca'),
+                 style = "width:100%;height:700px;overflow:scroll;")
+    ) 
+  )
+)
+
+mod <- tabItem(
+  tabName = 'modelo',
+  box(title = 'Entradas do modelo', width = 12,
+      fluidRow(
+        column(3,
+               selectInput("m_tipo_recurso", "Tipo Recurso", unique(d_vis[['tipo_recurso']]), 'RECURSO VOLUNTARIO', multiple = F),
+               selectInput("m_secao", "Secao", unique(d_vis[['secao']]), 'PRIMEIRA SECAO', multiple = F)),
+        column(3,
+               selectInput("m_tipo_pessoa", "Tipo Pessoa", unique(d_vis[['tipo_pessoa']]), 'Jurídica', multiple = F),
+               selectInput("m_tipo", "Tipo de Relator", unique(d_vis[['tipo']]), 'FAZENDA', multiple = F)),
+        column(3,
+               selectInput("m_tributos", "Tributos", unique(d_vis[['tributos']]), 'PIS COFINS', multiple = F))
+      )
+  ),
+  box(title = 'Resultados', width = 12, tableOutput('m_result'), tableOutput('m_input'))
+)
+
+
+foot <- tags$div(tags$span(
+  tags$a(tags$img(src = 'platipus1.png', style = "height:100%;"),
+         'Powered by platipus', 
+         href = 'http://platipus.com.br', 
+         target = '_blank'),
+  style = 'position:fixed;right:10px;bottom:10px;z-index:10;height:30px'))
+
+bod <- dashboardBody(tabItems(dash, turm, trib, cons, busc, mod), foot)
+
+#_______________________________________________________________________________
+dashboardPage(header, sidebar, bod, skin = 'blue', 
+              title = 'VisCARF - Powered by platipus')

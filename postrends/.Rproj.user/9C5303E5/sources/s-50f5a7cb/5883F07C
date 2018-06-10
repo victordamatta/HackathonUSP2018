@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1516907480343.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "5883F07C",
+    "lastKnownWriteTime" : 1516905952,
+    "last_content_update" : 1516905952,
+    "path" : "/srv/shiny-server/platipus/viscarf5/ui.R",
+    "project_path" : "ui.R",
+    "properties" : {
+        "cursorPosition" : "122,0",
+        "scrollLine" : "91"
+    },
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

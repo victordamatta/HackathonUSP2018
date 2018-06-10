@@ -1,0 +1,35 @@
+To run a command as administrator (user "root"), use "sudo <command>".
+See "man sudo_root" for details.
+
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [K]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ su do chmod -R 777 srv[K[K[K/srv/shiny-server/carf
+[sudo] password for daleffi: 
+Sorry, try again.
+[sudo] password for daleffi: 
+^C
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ ^C
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ ^C
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ ^? [A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K
+[K[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cna o[K[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K
+[K]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod - r[KR777[C 777[C[C[C ^VV[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K
+[K[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K / srv/shiny-server/carf/c[Kdata
+[sudo] password for daleffi: 
+chmod: cannot access '777': No such file or directory
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ ^C
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ ^C
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod R777 /srv /shiny-server/carf/data/
+chmod: invalid mode: ‘R777’
+Try 'chmod --help' for more information.
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod R777 /srv//shiny-server/carf/data/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C- R 777 /srv/shiny-server/carf/data[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[CR777 /srv/[2Pshiny-server/carf/data/[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C 777 /srv/shiny-server/carf/data/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C
+
+chmod: invalid mode: ‘R’
+Try 'chmod --help' for more information.
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod - R 777 / srv/shiny-server/carf/data
+chmod: cannot access '777': No such file or directory
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod - R 777 / srv/shiny-server/carf/
+chmod: cannot access '777': No such file or directory
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod - R 777 /ssrv/shiny-server/carf/[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C777 /sr[1Pv/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C
+
+chmod: cannot access 'R777': No such file or directory
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ sudo chmod - R777 /srrv/shiny-server/carf/[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C R777 /srv[1P/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C-R777 /srv/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C R777 /srv/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[CR777 /sr[1Pv/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C 777 /srv/shiny-server/carf/[A]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C[C
+
+]0;/srv/shiny-server/carf]0;daleffi@ip-172-31-10-75: /srv/shiny-server/carf[01;32mdaleffi@ip-172-31-10-75[00m:[01;34m/srv/shiny-server/carf[00m$ 

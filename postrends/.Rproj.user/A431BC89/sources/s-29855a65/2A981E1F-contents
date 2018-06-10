@@ -1,0 +1,161 @@
+devtools::load_all('crawlercarf')
+
+library(dplyr)
+library(purrr)
+library(magrittr)
+library(stringr)
+library(stringi)
+library(pdftools)
+# library(crawlercarf)
+
+#baixa e consolida
+all_job_period <- function(date_min,date_max, max_page = Inf, path = '.'){
+  
+  mesano_min <- stringr::str_replace_all(date_min, '/','.')
+  mesano_max <- stringr::str_replace_all(date_max, '/','.')
+  
+  path1 <- glue::glue(path, "/", mesano_min, '-ate-',mesano_max)
+  
+  crawlercarf::download_decision_period(date_min = date_min, 
+                                        date_max = date_max,
+                                        max_page = max_page,
+                                        path = path)
+  
+  consolide_job(path1, type = 'period')
+  
+}
+
+all_job_year <- function(year, max_page = Inf, path = '.'){
+  
+  
+  
+  path1 <- purrr::map(year, function(x) glue::glue(path, "/", x)) %>%
+    unlist
+  
+  purrr::walk(year, 
+              function(x){
+                crawlercarf::download_decision_year(year = x, 
+                                                    max_page = max_page, 
+                                                    path = path)})
+  
+  consolide_job(path1, type = 'year')
+  
+}
+
+#baixa, consolida e salva rds
+
+consolide_job <- function(path, type){
+  
+  files <- all_files_path(path, type)
+  
+  
+  files_arq <- files %>%
+    mutate(arq = str_extract(str_sub(file, end = str_length(file)-5), '[0-9]+$')) %>%
+    filter(!is.na(arq))
+  
+  
+  tabela<-parse_decision(files$file)
+  
+  id<- tabela$decicions$id_lawsuit
+  
+  comprot <- get_comprot(id)
+  
+  
+  tabelao <- consolidate(pages = tabela$pages, 
+                         decisions = tabela$decicions,
+                         comprot = comprot) %>%
+    mutate(rowname = row.names(.),
+           id_decision2= stri_replace_all_fixed(id_decision, '-','') %>% 
+             stri_replace_all_fixed('.','')) %>%
+    left_join(files_arq, by = c('id_decision2'= 'arq')) %>%
+    left_join(tabela$decicions %>% select(id_lawsuit, id_decision, txt_decision = decision), by = c('id_lawsuit' ='id_lawsuit', 'id_decision'= 'id_decision')) %>%
+    mutate(camara0 = rm_accent(chamber),
+           camara1 = case_when(camara0 %>% str_detect(regex("PRIMEIRA CAMARA", ignore_case = T)) ~ '1a CÂMARA',
+                               camara0 %>% str_detect(regex("SEGUNDA CAMARA", ignore_case = T)) ~ '2a CÂMARA',
+                               camara0 %>% str_detect(regex("TERCEIRA CAMARA", ignore_case = T)) ~ '3a CÂMARA',
+                               camara0 %>% str_detect(regex("QUARTA CAMARA", ignore_case = T)) ~ '4a CÂMARA',
+                               camara0 %>% str_detect(regex("QUINTA CAMARA", ignore_case = T)) ~ '5a CÂMARA',
+                               camara0 %>% str_detect(regex("SEXTA CAMARA", ignore_case = T)) ~ '6a CÂMARA',
+                               camara0 %>% str_detect(regex("SETIMA CAMARA", ignore_case = T)) ~ '7a CÂMARA',
+                               camara0 %>% str_detect(regex("CSRF", ignore_case = T)) ~ 'CSRF',
+                               camara0 %>% str_detect(regex("NAO IDENTIFICADO", ignore_case = T)) ~ 'NÃO IDENTIFICADO',
+                               TRUE ~ 'NÃO IDENTIFICADO'),
+           
+           turma1 = case_when(camara0 %>% str_detect(regex("ESPECIAL", ignore_case = T)) ~ 'ESPECIAL',
+                              camara0 %>% str_detect(regex("PRIMEIRA TURMA", ignore_case = T)) ~ '1a TURMA',
+                              camara0 %>% str_detect(regex("SEGUNDA TURMA", ignore_case = T)) ~ '2a TURMA',
+                              camara0 %>% str_detect(regex("TERCEIRA TURMA", ignore_case = T)) ~ '3a TURMA',
+                              camara0 %>% str_detect(regex("QUARTA TURMA", ignore_case = T)) ~ '4a TURMA',
+                              camara0 %>% str_detect(regex("QUINTA TURMA", ignore_case = T)) ~ '5a TURMA',
+                              camara0 %>% str_detect(regex("SEXTA TURMA", ignore_case = T)) ~ '6a TURMA',
+                              camara0 %>% str_detect(regex("SETIMA TURMA", ignore_case = T)) ~ '7a TURMA',
+                              camara0 %>% str_detect(regex("CSRF", ignore_case = T)) ~ 'CSRF',
+                              camara0 %>% str_detect(regex("SUPLENTES", ignore_case = T)) ~ 'SUPLENTES',
+                              camara0 %>% str_detect(regex("NAO IDENTIFICADO", ignore_case = T)) ~ 'NÃO IDENTIFICADO',
+                              TRUE ~ 'NÃO IDENTIFICADO'))
+  
+  
+  count <- tabelao %>% count(camara1)
+  
+  tabelao %<>% left_join(count, 'camara1') %>%
+    select(rowname,
+           arq = file,
+           n_processo = id_lawsuit,
+           n_acordao = id_decision,
+           tipo_recurso = type_appeal,
+           contribuinte = taxpayer,
+           relator = rapporteur,
+           txt_ementa = summary,
+           txt_decisao = txt_decision,
+           data_pub = date_publication,
+           tipo_pessoa = type_party,
+           cn = cpf_cnpj,
+           uf = state,
+           votacao = vote,
+           resultado = result, #olhar
+           tributos = taxes,
+           tipo = type,
+           camara_turma = chamber, #olhar
+           secao = section,
+           decisao = decision,
+           n = n,
+           camara = camara1, 
+           turma = turma1,
+           -id_decision2)
+  
+  saveRDS(tabelao, 'data/d_vis_ultimo.rds')
+}
+
+# download_decision_year(2016, 'html')
+
+dir_files<- function(pages_dir){
+  
+  dir_file = stringr::str_c(pages_dir,'/' ,list.files(pages_dir))
+  
+  return(dir_file)
+  
+}
+
+
+
+all_files_path <- function(path, type){
+  pages_dir <- data_frame(dir =list.dirs(path))
+  
+  if(type == 'year'){
+    pages_dir %<>%
+    filter(dir != stringr::str_sub(dir, end = 10))
+  }
+  if(type == 'period'){
+    pages_dir %<>%
+      filter(dir != stringr::str_sub(dir, end = 24))
+  }
+  
+  
+  files <- purrr::map(pages_dir$dir, dir_files) %>%
+    purrr::map(data_frame) %>%
+    purrr::map(purrr::set_names, 'file') %>%
+    purrr::reduce(rbind)
+  
+  return(files)
+  
+}

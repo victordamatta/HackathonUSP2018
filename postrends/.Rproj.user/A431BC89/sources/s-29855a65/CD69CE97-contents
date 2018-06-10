@@ -1,0 +1,24 @@
+# devtools::load_all('crawlercarf')
+date_min = '05/2018'
+date_max = '05/2018'
+path = 'html'
+
+all_job_period(date_min = date_min,
+               date_max = date_max, 
+               path = path)
+
+
+# consolide_job(path = path1,type = type)
+
+novo <- readRDS('data/d_vis_ultimo.rds') %>% arrange(data_pub)
+
+antigo <- readRDS('data/d_vis.rds') %>% arrange(data_pub) %>%
+  filter(! n_acordao %in% novo$n_acordao)
+
+saveRDS(antigo,'data/d_vis_antigo.rds')
+
+d_vis <- rbind(antigo,novo) %>%
+  arrange(data_pub) %>%
+  mutate(rowname = seq(1,nrow(.),1))
+
+saveRDS(d_vis,'data/d_vis.rds')

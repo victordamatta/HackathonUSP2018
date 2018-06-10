@@ -1,0 +1,10 @@
+name: postrends
+title:
+username:
+account: ctlente
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 358356
+bundleId: 1421240
+url: https://ctlente.shinyapps.io/postrends/
+when: 1528637575.12557

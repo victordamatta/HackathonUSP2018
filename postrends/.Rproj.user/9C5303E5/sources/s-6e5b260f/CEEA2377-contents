@@ -1,0 +1,921 @@
+
+shinyServer(function(input, output, session) {
+  
+  #_____________________________________________________________________________
+  
+  
+  
+  observe({
+    
+    start <- min(d_vis$data_pub,na.rm = T)
+    
+    end <- if_else(max(d_vis$data_pub, na.rm = T) > lubridate::today(),
+                   today(),
+                   max(d_vis$data_pub, na.rm = T))
+    
+    
+    updateDateRangeInput(session,
+                         'corte',
+                         start = start,
+                         end = end,
+                         min = start,
+                         max = end)
+    
+    updateDateRangeInput(session,
+                         'b_data_pub',
+                         start = start,
+                         end = end,
+                         min = start,
+                         max = end)
+    
+  })
+  
+  dados <- reactive({
+    
+    
+    d <- d_vis %>%
+      mutate(resultado = if_else(is.na(resultado), 'VAZIO', resultado)) %>%
+      filter(!is.na(data_pub)) %>% 
+      filter(uf %in% c(input$origem, 'VAZIO')) %>% 
+      filter(data_pub >= as.Date(input$corte[1]) & data_pub <= as.Date(input$corte[2]))
+    
+    
+    if (!is.null(input$query) && input$query != '') {
+      pesquisa <- tibble::tibble(id = 1, txt = clean_txt(input$query)) %>% 
+        tidytext::unnest_tokens(word, txt, to_lower = FALSE)
+      
+      tdm_filter <- dplyr::semi_join(tdm, pesquisa, "word")
+      
+      res <- dplyr::semi_join(d, tdm_filter, "rowname")
+      if (nrow(res) == 0) res <- d
+      # jj <- which(tdm$dimnames$Terms %in% preparar(input$query))
+      # if(length(jj) > 0) {
+      #   x <- tdm[jj,]$v
+      #   dq <- dplyr::data_frame(rowname = names(x), ind = x)
+      #   res <- d %>% inner_join(dq, 'rowname') %>% arrange(desc(ind)) %>% select(-rowname, -ind)
+      # } else {
+      #   res <- d
+      # }
+    } else{
+      res <- d
+    }
+    
+    return(res)
+    
+  })
+  
+  # #_____________________________________________________________________________
+  output$processos <- renderValueBox({
+    n <- nrow(dados())
+    valueBox(
+      format(n, big.mark = '.', decimal = ','),
+      "Acórdaos",
+      icon = icon("hashtag"),
+      color = "aqua"
+    )
+  })
+  output$decisoes <- renderValueBox({
+    p <- dados() %>%
+      summarise(r = round(sum(resultado == 'DESFAVORAVEL', na.rm = T)/n() * 100, 0)) %>%
+      with(r)
+    valueBox(
+      paste0(p, "%"), "Decisoes desfavoráveis",
+      icon = icon("percent"),
+      color = "red"
+    )
+  })
+  output$foo <- renderValueBox({
+    p <- dados() %>%
+      summarise(r = round(sum(votacao == 'UNANIMIDADE')/n() * 100, 0)) %>%
+      with(r)
+    valueBox(
+      paste0(p, "%"), "Decisoes por unanimidade",
+      icon = icon("percent"),
+      color = "olive"
+    )
+  })
+  output$bar <- renderValueBox({
+    p <- dados() %>%
+      summarise(r = round(sum(str_detect(votacao, 'UALIDAD'))/n() * 100, 0)) %>%
+      with(r)
+    valueBox(
+      paste0(p, "%"), "Decisoes com voto de qualidade",
+      icon = icon("percent"),
+      color = "purple"
+    )
+  })
+  
+  #_____________________________________________________________________________
+  output$ultimos <- DT::renderDataTable({
+    
+    d <- dados() %>%
+      arrange(desc(data_pub)) %>%
+      head(100) %>%
+      mutate(txt_ementa = ifelse(str_length(txt_ementa) > 250,
+                                 paste0(str_sub(txt_ementa, 1L, 250L), '...'),
+                                 txt_ementa)) %>%
+      select(n_acordao, n_processo, contribuinte, relator, data_pub, txt_ementa, resultado)
+    
+    names(d) <- c('Acórdao', 'Processo', 'Contribuinte',
+                  'Relator(a)', 'Data de Publicação', 'Ementa', 'Resultado')
+    DT::datatable(d,
+                  options = list(lengthChange = TRUE,
+                                 pageLength = 5,
+                                 processing = TRUE),
+                  style = 'bootstrap', class = 'compact',
+                  filter = 'top')
+  }, server = T)
+  #
+  # #_____________________________________________________________________________
+  
+  observe({
+    if(input$res != 'Nada' & input$quebra != 'Nada'){
+      
+      ch <- dados() %>%
+        select(resultado) %>%
+        distinct() 
+      
+      
+      updateSelectizeInput(session,
+                           'tipo_res',
+                           choices = ch$resultado,
+                           selected = 'DESFAVORAVEL')
+    }
+  })
+  #______________________________________________________________________________
+  
+  output$graf_tempo_acu <- renderDygraph({
+    
+    quebras <- c('Nada' = 'Nada', 
+                 'Seção de julgamento' = 'secao', 
+                 'Votacao' = 'votacao',
+                 'Tipo de pessoa' = 'tipo_pessoa',
+                 'Tipo de relator' = 'tipo')
+    
+    resultados <- c('nao informadas'= 'VAZIO',
+                    'avoraveis' = 'FAVORAVEL',
+                    'anuladas, nao conhecidas ou diligencias'='ANULADO, NAO CONHECIDO OU DILIGENCIA',
+                    'parcialmente favoraveis'='PARCIALMENTE FAVORAVEL',
+                    'desfavoraveis'= 'DESFAVORAVEL')
+    
+    
+    quebras<-names(which(quebras == input$quebra))
+    resultados<-names(which(resultados == input$tipo_res))
+    
+    if (input$res == 'Resultados') {
+      if (input$quebra != 'Nada') {
+        # quebrar com resultados
+        d <- dados() %>%
+          filter(resultado == input$tipo_res)%>%
+          select_('data_pub', input$quebra, 'resultado') %>%
+          group_by_(input$quebra, 'resultado') %>%
+          arrange_('data_pub',input$quebra, 'resultado')%>%
+          mutate(um = 1,
+                 acu = purrr::accumulate(um,sum)/n()) %>%
+          ungroup %>%
+          select_(.dots = c(input$quebra, 'data_pub', 'acu')) %>%
+          tibble::rownames_to_column() %>%
+          spread_(input$quebra, 'acu') %>%
+          select(-rowname)
+        
+        
+        dxts <- xts::xts(d[, -1], d$data_pub)
+        
+        
+        p <- dygraph(dxts,
+                     main = sprintf("Proporção acumulada de decisões %s por %s",stringr::str_to_lower(resultados), stringr::str_to_lower(quebras))) %>%
+          dyOptions(drawPoints = FALSE, stepPlot = TRUE,
+                    fillGraph = FALSE,
+                    stackedGraph = FALSE,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    drawGapEdgePoints = TRUE,
+                    connectSeparatedPoints = TRUE)
+        
+      } else {
+        # so resultados (default)
+        d <- dados() %>%
+          group_by_(.dots = c('resultado')) %>%
+          arrange_(.dots = c('data_pub')) %>%
+          mutate(um = 1, acu = cumsum(um) / sum(um)) %>%
+          ungroup %>%
+          select_(.dots = c('resultado', 'data_pub', 'acu')) %>%
+          add_rownames %>%
+          spread_('resultado', 'acu') %>%
+          select(-rowname)
+        
+        dxts <- xts::xts(d[, -1], d$data_pub)
+        
+        p <- dygraph(dxts,
+                     main = 'Proporcao acumulada de decisoes por resultado') %>%
+          dyOptions(drawPoints = FALSE, stepPlot = TRUE,
+                    fillGraph = FALSE,
+                    stackedGraph = FALSE,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    drawGapEdgePoints = TRUE,
+                    connectSeparatedPoints = TRUE)
+        
+      }
+    } else {
+      if (input$quebra != 'Nada') {
+        #mostrar quebrado por variavel
+        d <- dados() %>%
+          group_by_(.dots = c(input$quebra)) %>%
+          arrange_(.dots = c('data_pub')) %>%
+          mutate(um = 1, acu = cumsum(um) / sum(um)) %>%
+          ungroup %>%
+          select_(.dots = c(input$quebra, 'data_pub', 'acu')) %>%
+          add_rownames %>%
+          spread_(input$quebra, 'acu') %>%
+          select(-rowname)
+        
+        dxts <- xts::xts(d[, -1], d$data_pub)
+        
+        p <- dygraph(dxts,
+                     main = sprintf('Proporcao acumulada do total de decisoes por %s', stringr::str_to_lower(quebras))) %>%
+          dyOptions(drawPoints = FALSE, stepPlot = TRUE,
+                    fillGraph = FALSE,
+                    stackedGraph = FALSE,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    drawGapEdgePoints = TRUE,
+                    connectSeparatedPoints = TRUE)
+      } else {
+        #mostrar volume
+        d <- dados() %>%
+          arrange(data_pub) %>%
+          mutate(um = 1, acu = cumsum(um)) %>%
+          select(data_pub, acu)
+        
+        dxts <- xts::xts(d[, -1], d$data_pub)
+        
+        p <- dxts %>%
+          dygraph(main = 'Proporcao acumulada do total de decisoes') %>%
+          dyOptions(fillGraph = FALSE,
+                    drawPoints = FALSE,
+                    strokeWidth = 2,
+                    colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    colors = 'blue')
+      }
+    }
+    p %>%
+      dyHighlight(highlightCircleSize = 5,
+                  highlightSeriesBackgroundAlpha = 0.2,
+                  hideOnMouseOut = FALSE) %>%
+      dyLegend(show = "onmouseover",
+               hideOnMouseOut = TRUE,
+               width = 600)
+  })
+  #_________________________________________________________________
+  output$graf_tempo_mes <- renderDygraph({
+    quebras <- c('Nada' = 'Nada', 
+                 'Seção de julgamento' = 'secao', 
+                 'Votacao' = 'votacao',
+                 'Tipo de pessoa' = 'tipo_pessoa',
+                 'Tipo de relator' = 'tipo')
+    
+    resultados <- c('nao informadas'= 'VAZIO',
+                    'avoraveis' = 'FAVORAVEL',
+                    'anuladas, nao conhecidas ou diligencias'='ANULADO, NAO CONHECIDO OU DILIGENCIA',
+                    'parcialmente favoraveis'='PARCIALMENTE FAVORAVEL',
+                    'desfavoraveis'= 'DESFAVORAVEL')
+    
+    
+    quebras<-names(which(quebras == input$quebra))
+    resultados<-names(which(resultados == input$tipo_res))
+    
+    d <- dados() %>%
+      mutate(mes_ano = as.Date(sprintf('%04d-%02d-01',
+                                       year(data_pub),
+                                       month(data_pub))))
+    
+    if (input$res == 'Resultados') {
+      if (input$quebra != 'Nada') {
+        # quebrar com resultados
+        d <- d %>%
+          count_(vars = c('mes_ano', input$quebra, 'resultado')) %>%
+          replace_na(setNames(list('VAZIO'), input$quebra)) %>%
+          mutate(Volume = n) %>%
+          ungroup %>%
+          filter(resultado == input$tipo_res) %>%
+          select(-resultado, -n) %>%
+          spread_(input$quebra, 'Volume')
+        
+        dxts <- xts::xts(d[, -1], d$mes_ano)
+        
+        p <- dygraph(dxts,
+                     main = sprintf('Volume de decisoes %s por %s', stringr::str_to_lower(resultados), stringr::str_to_lower(quebras))) %>%
+          dyOptions(drawPoints = TRUE,
+                    stackedGraph = input$stack,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    drawGapEdgePoints = TRUE,
+                    connectSeparatedPoints = TRUE)
+        
+      } else {
+        # so resultados (default)
+        d <- d %>%
+          count(mes_ano, resultado) %>%
+          mutate(Volume = n) %>%
+          select(-n) %>%
+          spread(resultado, Volume)
+        
+        dxts <- xts::xts(d[, -1], d$mes_ano)
+        
+        p <- dygraph(dxts,
+                     main = 'Volume de decisoes por resultado') %>%
+          dyOptions(drawPoints = TRUE,
+                    stackedGraph = input$stack,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE)
+      }
+    } else {
+      if (input$quebra != 'Nada') {
+        #mostrar quebrado por variavel
+        d <- d %>%
+          count_(vars = c('mes_ano', input$quebra)) %>%
+          replace_na(setNames(list('VAZIO'), input$quebra)) %>%
+          mutate(prop = n / sum(n) * 100) %>%
+          select(-prop) %>%
+          spread_(input$quebra, 'n')
+        
+        dxts <- xts::xts(d[, -1], d$mes_ano)
+        
+        p <- dygraph(dxts,
+                     main = sprintf('Volume de decisoes por %s', stringr::str_to_lower(quebras))) %>%
+          dyOptions(drawPoints = TRUE,
+                    stackedGraph = input$stack,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE)
+        
+      } else {
+        #mostrar volume
+        d <- d %>% count(mes_ano)
+        dxts <- xts::xts(d[, -1], d$mes_ano)
+        
+        p <- dxts %>%
+          dygraph(main = 'Volume total de decisoes') %>%
+          dyOptions(fillGraph = TRUE, drawPoints = TRUE,
+                    strokeWidth = 2, colorValue = .8,
+                    includeZero = TRUE,
+                    animatedZooms = TRUE,
+                    colors = 'blue')
+      }
+    }
+    p %>%
+      dyHighlight(highlightCircleSize = 5,
+                  highlightSeriesBackgroundAlpha = 0.2,
+                  hideOnMouseOut = FALSE) %>%
+      dyLegend(show = "onmouseover",
+               hideOnMouseOut = TRUE,
+               width = 600)
+    
+  })
+  
+  output$mapa <- renderLeaflet({
+    
+    d <- dados() %>%
+      count(uf) %>%
+      inner_join(coord_uf, c('uf' = 'id')) %>%
+      mutate(res = sqrt(n / 10)) %>%
+      data.frame()
+    
+    leaflet(d) %>%
+      addTiles(urlTemplate = 'http://{s}.tiles.mapbox.com/v3/jtrecenti.map-oskm8vhn/{z}/{x}/{y}.png',
+               attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>') %>%
+      addCircleMarkers(lng = ~lon , lat = ~lat, data = d, radius = ~res/2,
+                       popup = ~paste(uf, n, sep = '<br />'))
+    
+  })
+  #_________________________________________________________
+  output$graf_barras <- renderPlotly({
+    
+    quebras <- c('Nada' = 'Nada', 
+                 'Seção de julgamento' = 'secao', 
+                 'Votacao' = 'votacao',
+                 'Tipo de pessoa' = 'tipo_pessoa',
+                 'Tipo de relator' = 'tipo')
+    
+    resultados <- c('nao informadas'= 'VAZIO',
+                    'avoraveis' = 'FAVORAVEL',
+                    'anuladas, nao conhecidas ou diligencias'='ANULADO, NAO CONHECIDO OU DILIGENCIA',
+                    'parcialmente favoraveis'='PARCIALMENTE FAVORAVEL',
+                    'desfavoraveis'= 'DESFAVORAVEL')
+    
+    
+    
+    resultados<-names(which(resultados == input$tipo_res))
+    
+    quebras<-names(which(quebras == input$quebra))
+    
+    
+    if (input$res == 'Resultados') {
+      if (input$quebra != 'Nada') {
+        
+        n <- dados() %>%
+          select_(input$quebra) %>%
+          distinct() %>%
+          nrow()
+        
+        colors <- rainbow(n, start = 0.6, end = 0.75)
+        
+        xaxis = list(title = '', tickformat = "%")
+        
+        yaxis = list(title = '',showticklabels = FALSE)
+        
+        legend <- list(font = list(family = "sans-serif",
+                                   size = 9,
+                                   color = 'black'),
+                       y=-0.1,
+                       orientation = 'h')
+        
+        dados() %>%
+          group_by_('resultado',input$quebra) %>%
+          summarise(Volume = n()) %>%
+          mutate(P = Volume/sum(Volume),
+                 Prop = scales::percent(P)) %>%
+          filter(resultado == input$tipo_res) %>%
+          plot_ly(x=~P,
+                  y=~reorder(eval(parse(text = input$quebra)), Volume),
+                  hoverinfo = 'text',
+                  text = ~paste0('</br>',str_to_lower(quebras),': ',eval(parse(text = input$quebra)),
+                                 '</br> Volume: ', Volume, 
+                                 '</br> Prop: ', Prop),
+                  type = 'bar',
+                  orientation = 'h',
+                  marker = list(line = list(color = 'black', width = 1.5)),
+                  color = ~ eval(parse(text = input$quebra)),
+                  colors = colors,
+                  alpha = 0.8) %>%
+          layout(title = sprintf('Proporção de decisões \n%s por %s', str_to_lower(resultados), str_to_lower(quebras)),
+                 yaxis = yaxis,
+                 xaxis = xaxis,
+                 legend = legend,
+                 margin =list(t = 50))
+        
+        
+      } else { #quebra == Nada
+        
+        n <- dados() %>%
+          select(resultado) %>%
+          distinct() %>%
+          nrow()
+        
+        colors <- rainbow(n, start = 0.6, end = 0.75)
+        
+        xaxis = list(title = '', tickformat = "%")
+        
+        yaxis = list(title = '',showticklabels = FALSE)
+        
+        legend <- list(font = list(family = "sans-serif",
+                                   size = 9,
+                                   color = 'black'),
+                       y=-0.1,
+                       orientation = 'h')
+        
+        dados() %>%
+          group_by(resultado) %>%
+          summarise(Volume = n()) %>%
+          mutate(P = Volume/sum(Volume),
+                 Prop = scales::percent(P)) %>%
+          plot_ly(x=~P,
+                  y=~reorder(resultado, Volume),
+                  hoverinfo = 'text',
+                  text = ~paste0('</br> Resultado: ', resultado,
+                                 '</br> Volume: ', Volume, 
+                                 '</br> Prop: ', Prop),
+                  type = 'bar',
+                  orientation = 'h',
+                  marker = list(line = list(color = 'black', width = 1.5)),
+                  color = ~resultado,
+                  colors = colors,
+                  alpha = 0.8) %>%
+          layout(title = sprintf('Proporção de decisões por resultado'),
+                 yaxis = yaxis,
+                 xaxis = xaxis,
+                 legend = legend,
+                 margin =list(t = 50))
+      }
+      
+    }
+    else { #volume processual
+      if(input$quebra != 'Nada'){
+        
+        n <- dados() %>%
+          select_(input$quebra) %>%
+          distinct() %>%
+          nrow()
+        
+        colors <- rainbow(n, start = 0.6, end = 0.75)
+        
+        xaxis = list(title = '',tickformat = "%")
+        
+        yaxis = list(title = '',showticklabels = FALSE)
+        
+        legend <- list(font = list(family = "sans-serif",
+                                   size = 9,
+                                   color = 'black'),
+                       y=-0.1,
+                       orientation = 'h')
+        
+        dados() %>%
+          group_by_(input$quebra) %>%
+          summarise(Volume = n()) %>%
+          mutate(P = Volume/sum(Volume),
+                 Prop = scales::percent(P)) %>%
+          plot_ly(x=~P,
+                  y=~reorder(eval(parse(text = input$quebra)), Volume),
+                  hoverinfo = 'text',
+                  text = ~paste0('</br>',str_to_lower(quebras),': ',eval(parse(text = input$quebra)),
+                                 '</br> Volume: ', Volume, 
+                                 '</br> Prop: ', Prop),
+                  type = 'bar',
+                  orientation = 'h',
+                  marker = list(line = list(color = 'black', width = 1.5)),
+                  color = ~ eval(parse(text = input$quebra)),
+                  colors = colors,
+                  alpha = 0.8) %>%
+          layout(title = sprintf('Proporção de decisões por %s', str_to_lower(quebras)),
+                 yaxis = yaxis,
+                 xaxis = xaxis,
+                 legend = legend,
+                 margin =list(t = 50))
+        
+      }
+      else{ #quebra == Nada
+        
+        
+        yaxis = list(title = '%', tickformat = "%")
+        
+        xaxis = list(title = '', y = -0.7)
+        
+        
+        dados() %>%
+          mutate(mes_ano = as.Date(sprintf('%04d-%02d-01',
+                                           year(data_pub),
+                                           month(data_pub)))) %>%
+          group_by(mes_ano) %>%
+          summarise(Volume = n()) %>%
+          mutate(P= Volume/sum(Volume),
+                 Prop = scales::percent(P)) %>%
+          ungroup %>%
+          mutate(mes_ano_v = str_c(month.abb[month(mes_ano)],' ', year(mes_ano)),
+                 Ordem = seq(1,nrow(.),1)) %>%
+          plot_ly(x=~reorder(mes_ano_v, Ordem),
+                  y=~P,
+                  hoverinfo = 'text',
+                  text = ~paste0('</br> Data: ', mes_ano_v,
+                                 '</br> Volume: ', Volume, 
+                                 '</br> Prop: ', Prop),
+                  type = 'bar',
+                  marker = list(color = '#4d0099',
+                                line = list(color = 'black', width = 1.5)),
+                  alpha = 0.8) %>%
+          layout(title = sprintf('Proporção de decisões por mês'),
+                 yaxis = yaxis,
+                 xaxis = xaxis,
+                 legend = legend,
+                 margin =list(b=100, t = 50))
+        
+      }
+    }
+    
+    
+    
+  }) 
+  #-----------------------------------------------------------------
+  #Busca Avançada
+  
+  dados_busca <- reactive({
+    if (!is.null(input$b_pesquisa) && input$b_pesquisa > 0) {
+      r <- ifelse(is.null(input[["b_relator"]]) || input[["b_relator"]] == '', '.*', input[["b_relator"]])
+      ct <- ifelse(is.null(input[["b_contribuinte"]]) || input[["b_contribuinte"]] == '', '.*', input[["b_contribuinte"]])
+      e <- ifelse(is.null(input[["b_txt_ementa"]]) || input[["b_txt_ementa"]] == '', '.*', input[["b_txt_ementa"]])
+      d <- ifelse(is.null(input[["b_txt_decisao"]]) || input[["b_txt_decisao"]] == '', '.*', input[["b_txt_decisao"]])
+      d_vis %>%
+        filter(data_pub >= as.Date(input$b_data_pub[1]) & data_pub <= as.Date(input$b_data_pub[2])) %>%
+        filter((is.null(input[["b_tipo_recurso"]]) || input[["b_tipo_recurso"]] == "") | tipo_recurso %in% input[["b_tipo_recurso"]]) %>%
+        filter((is.null(ct) || ct == "") | str_detect(tolower(contribuinte), gsub(' +', '|', str_trim(ct)))) %>%
+        filter((is.null(r) || r == "") | str_detect(tolower(relator), gsub(' +', '|', str_trim(r)))) %>%
+        filter((is.null(e) || e == "") | str_detect(tolower(txt_ementa), gsub(' +', '|', str_trim(e)))) %>%
+        filter((is.null(d) || d == "") | str_detect(tolower(txt_decisao), gsub(' +', '|', str_trim(d)))) %>%
+        filter((is.null(input[["b_tipo_pessoa"]]) || input[["b_tipo_pessoa"]] == "") | tipo_pessoa %in% input[["b_tipo_pessoa"]]) %>%
+        filter((is.null(input[["b_uf"]]) || input[["b_uf"]] == "") | uf %in% input[["b_uf"]]) %>%
+        filter((is.null(input[["b_votacao"]]) || input[["b_votacao"]] == "") | votacao %in% input[["b_votacao"]]) %>%
+        filter((is.null(input[["b_resultado"]]) || input[["b_resultado"]] == "") | resultado %in% input[["b_resultado"]]) %>%
+        filter((is.null(input[["b_tributos"]]) || input[["b_tributos"]] == "") | tributos %in% input[["b_tributos"]]) %>%
+        filter((is.null(input[["b_tipo"]]) || input[["b_tipo"]] == "") | tipo %in% input[["b_tipo"]]) %>%
+        filter((is.null(input[["b_secao"]]) || input[["b_secao"]] == "") | secao %in% input[["b_secao"]]) %>%
+        filter((is.null(input[["b_camara"]]) || input[["b_camara"]] == "") | camara %in% input[["b_camara"]]) %>%
+        filter((is.null(input[["b_turma"]]) || input[["b_turma"]] == "") | turma %in% input[["b_turma"]])
+    } else {
+      d_vis
+    }
+  })
+  #---------------------------------------------------
+  #DOWNLOAD BUSCA ACANCADA
+  output$download <- downloadHandler(
+    filename = function() {
+      paste('dados-', Sys.Date(), '.xlsx', sep='')
+    },
+    content = function(file) {
+      openxlsx::write.xlsx(head(dados_busca(), 1000), file)
+    }
+  )
+  #---------------------------------------------------
+  #BUSCA AVANCADA
+  output$rbusca <- DT::renderDataTable({
+    input$b_pesquisa
+    isolate({
+      dados_busca() %>%
+        select(n_acordao, n_processo, contribuinte, relator, data_pub, txt_ementa, resultado) %>%
+        mutate(txt_ementa = ifelse(str_length(txt_ementa) > 200, paste0(str_sub(txt_ementa, 1L, 200L), '...'), txt_ementa)) %>%
+        setNames(c('Acórdao', 'Processo', 'Contribuinte', 'Relator(a)', 'Data de Publicação', 'Ementa', 'Resultado')) %>%
+        DT::datatable(options = list(lengthChange = FALSE, processing = TRUE, searching = FALSE),
+                      class = 'compact', style = 'bootstrap')
+    })
+  })
+  #----------------------------------------------------------------------
+  #CONSELHEIROS
+  output$tab_conselheiros <- DT::renderDataTable({
+    dados() %>%
+      group_by(relator) %>%
+      mutate(`Numero de Documentos` = n()) %>%
+      ungroup %>% {
+        dd <- filter(., `Numero de Documentos` > input$cortar)
+        if (nrow(dd) > 0) dd else .
+      } %>%
+      group_by(relator, `Numero de Documentos`, tipo, resultado) %>%
+      summarise(Freq = n()) %>%
+      # count(relator, `Numero de Documentos`, tipo, resultado) %>%
+      mutate(porc = Freq / sum(Freq)) %>%
+      ungroup %>%
+      select(-Freq) %>%
+      spread(resultado, porc) %>%
+      arrange(`Numero de Documentos`) %>%
+      DT::datatable(filter = 'top') %>%
+      DT::formatPercentage(c('ANULADO, NAO CONHECIDO OU DILIGENCIA','DESFAVORAVEL','FAVORAVEL','PARCIALMENTE FAVORAVEL','VAZIO'), 1) 
+    
+  })
+  #__________________________________________________
+  #TRIBUTOS
+  output$graftrib_trib<- renderPlotly({
+    
+    tab<-dados() %>%
+      select(n_acordao,tributos) %>%
+      mutate(tributos = if_else(str_detect(tributos, 'OUTROS'), str_replace_all(tributos, 'OUTROS', 'OUTROS_TRIBUTOS'), tributos),
+             tributos = if_else(tributos == 'OUTRAS COMBINACOES', 'OUTRAS_COMBINACOES', tributos)) %>%
+      separate(tributos, c('t1','t2', 't3', 't4', 't5','t6','t7','t8'), ' ') %>%
+      gather(coluna, tributo, -n_acordao) %>%
+      select(-coluna) %>%
+      filter(!is.na(tributo)) %>%
+      mutate(total_acordao = n_distinct(n_acordao)) %>%
+      group_by(total_acordao,tributo) %>%
+      summarise(Volume = n()) %>%
+      mutate(P = Volume/total_acordao,
+             Prop = scales::percent(P))
+    
+    
+    n <- tab$tributo %>% unique %>% length
+    
+    colors <- rainbow(n, start = 0.6, end = 0.75)
+    
+    xaxis = list(title = '', tickformat = "%")
+    
+    yaxis = list(title = '',showticklabels = FALSE)
+    
+    legend <- list(font = list(family = "sans-serif",
+                               size = 9,
+                               color = 'black'),
+                   y=-0.1,
+                   orientation = 'h')
+    
+    tab %>%
+      plot_ly(x=~reorder(tributo, -Volume),
+              y=~P,
+              hoverinfo = 'text',
+              text = ~paste0('</br> Tributo: ', tributo, 
+                             '</br> Volume: ', Volume, 
+                             '</br> Prop: ', Prop),
+              type = 'bar',
+              # orientation = 'h',
+              marker = list(line = list(color = 'black', width = 1.5)),
+              color = ~tributo,
+              colors = colors,
+              alpha = 0.8) %>%
+      layout(yaxis = xaxis,
+             xaxis = yaxis,
+             legend = legend,
+             margin =list(t = 50))
+    
+  })
+  
+  output$graftrib_doc <- renderPlotly({
+    
+    tab<-dados() %>%
+      select(tributos) %>%
+      group_by(tributos) %>%
+      summarise(Volume = n()) %>%
+      ungroup() %>%
+      mutate(tributos = if_else(Volume < 100, 'OUTRAS COMBINACOES', tributos))%>%
+      # tributos = if_else(str_detect(tributos, 'OUTROS'), str_replace_all(tributos, 'OUTROS', 'OUTROS_TRIBUTOS'), tributos),
+      # tributos = if_else(tributos == 'OUTRAS COMBINACOES', 'OUTRAS_COMBINACOES', tributos)) %>%
+      group_by(tributos) %>%
+      summarise(Volume = sum(Volume)) %>%
+      mutate(P = Volume/sum(Volume),
+             Prop = scales::percent(P))
+    
+    
+    
+    n <- tab$tributos %>% unique %>% length
+    
+    colors <- rainbow(n, start = 0.6, end = 0.75)
+    
+    xaxis = list(title = '', tickformat = "%")
+    
+    yaxis = list(title = '',showticklabels = FALSE)
+    
+    legend <- list(font = list(family = "sans-serif",
+                               size = 9,
+                               color = 'black'),
+                   y=-0.1,
+                   orientation = 'h')
+    
+    tab %>%
+      plot_ly(x=~reorder(tributos, -Volume),
+              y=~P,
+              hoverinfo = 'text',
+              text = ~paste0('</br> Tributo: ', tributos, 
+                             '</br> Volume: ', Volume, 
+                             '</br> Prop: ', Prop),
+              type = 'bar',
+              # orientation = 'h',
+              marker = list(line = list(color = 'black', width = 1.5)),
+              color = ~tributos,
+              colors = colors,
+              alpha = 0.8) %>%
+      layout(yaxis = xaxis,
+             xaxis = yaxis,
+             legend = legend,
+             margin =list(t = 50))
+    
+  })
+  
+  #_____________________________________________________________________________
+  #TURMAS
+  output$graf_turmas <- renderPlotly({
+    
+    sec <- input$secao
+    cam <- input$camara
+    tur <- input$turma
+    
+    
+    d <- dados() %>%
+      filter(secao %in% sec, camara %in% cam, turma %in% tur) 
+    
+    validate(need(d %>% nrow() > 0, 'Não há combinação válida para esta seção, câmara e turma'))
+    
+    d <- d %>%
+      select(data_pub,resultado, secao,camara, turma) %>%
+      group_by(resultado) %>%
+      summarise(Freq = n()) %>%
+      mutate(P = Freq/sum(Freq),
+             Prop = scales::percent(P))
+    
+    tickfont <- list(
+      family = "sans serif",
+      size = 11)
+    
+    yaxis = list(title = 'Volume', dtick = 50)
+    xaxis = list(title = 'Resultado',tickfont = tickfont)
+    margin = list(b = 100)
+    
+    plot_ly(d,
+            x=~reorder(resultado, -Freq),
+            y =~Freq,
+            hoverinfo = 'text',
+            text =~paste0('</br> Resultado: ', resultado,
+                          '</br> Volume: ', Freq,
+                          '</br> Seção: ', input$secao,
+                          '</br> Camara: ', input$camara,
+                          '</br> Turma: ', input$turma,
+                          '</br> Prop: ', Prop),
+            marker = list(color = 'lightblue',
+                          line = list(color = 'navy',
+                                      width = 1.4)),
+            type = 'bar') %>%
+      
+      layout(xaxis = xaxis,
+             yaxis = yaxis,
+             margin = margin)
+    
+    
+  })
+  
+  output$graf_turmas_tempo <- renderPlotly({
+    
+    sec <- input$secao
+    cam <- input$camara
+    tur <- input$turma
+    
+    
+    d <- dados() %>%
+      filter(secao %in% sec, camara %in% cam, turma %in% tur) 
+    
+    validate(need(d %>% nrow() > 0, 'Não há combinação válida para esta seção, câmara e turma'))
+    
+    d <- d %>%
+      mutate(mes_ano = format(data_pub, '%Y-%m')) %>%
+      select(mes_ano,resultado, secao,camara, turma) %>%
+      group_by(mes_ano,resultado) %>%
+      summarise(Freq = n()) %>%
+      mutate(P = Freq/sum(Freq),
+             Prop = scales::percent(P))
+    
+    tickfont <- list(
+      family = "sans serif",
+      size = 12)
+    
+    yaxis = list(title = 'Volume', dtick = 50)
+    xaxis = list(title = 'Ano-Mês',tickfont = tickfont)
+    margin = list(b = 100)
+    legend = list(y = -0.3,orientation = 'h')
+    
+    plot_ly(d,
+            x=~mes_ano,
+            y =~Freq,
+            hoverinfo = 'text',
+            color =~resultado,
+            text =~paste0('</br> Data: ', mes_ano,
+                          '</br> Resultado: ', resultado,
+                          '</br> Volume: ', Freq,
+                          '</br> Seção: ', sec, #input$secao,
+                          '</br> Camara: ', cam,#input$camara,
+                          '</br> Turma: ', tur,#input$turma,
+                          '</br> Prop: ', Prop),
+            marker = list(#color = 'lightblue',
+              line = list(color = 'navy',
+                          width = 1.4)),
+            type = 'scatter',
+            mode = 'line+markers') %>%
+      layout(xaxis = xaxis,
+             yaxis = yaxis,
+             margin = margin,
+             legend = legend)
+    
+  })
+  
+  # #_____________________________________________________________________________
+  #
+  #
+  # output$m_result <- renderTable({
+  #   library(caret)
+  #   library(randomForest)
+  #
+  #   if (any(is.null(input$m_tipo_recurso),
+  #           is.null(input$m_secao),
+  #           is.null(input$m_tipo_pessoa),
+  #           is.null(input$m_tipo),
+  #           is.null(input$m_tributos))) {
+  #     data.frame(resultado = 'NULL')
+  #   } else {
+  #     d <- data.frame(tipo_recurso = factor(input$m_tipo_recurso, levels = unique(d_vis$tipo_recurso)),
+  #                     secao = factor(input$m_secao, levels = unique(d_vis$secao)),
+  #                     tipo_pessoa = factor(input$m_tipo_pessoa, levels = unique(d_vis$tipo_pessoa)),
+  #                     tipo = factor(input$m_tipo, levels = unique(d_vis$tipo)),
+  #                     tributos = factor(input$m_tributos, levels = unique(d_vis$tributos)))
+  #
+  #
+  #     p <- predict(m$fit[[2]], newdata = d)
+  #
+  #     cat(file=stderr(), "MENSAGEM>>>", p, class(m$fit[[1]]))
+  #     caret::predict.train(m$fit[[2]], newdata = d, type = 'prob')
+  #   }
+  # })
+  # #  output$m_input <- renderTable({
+  # #    if (any(is.null(input$m_tipo_recurso),
+  # #            is.null(input$m_secao),
+  # #            is.null(input$m_tipo_pessoa),
+  # #            is.null(input$m_tipo),
+  # #            is.null(input$m_tributos))) {
+  # #      data.frame(resultado = 'NULL')
+  # #    } else {
+  # #      d <- data.frame(tipo_recurso = factor(input$m_tipo_recurso, levels = unique(d_vis$tipo_recurso)),
+  # #                      secao = factor(input$m_secao, levels = unique(d_vis$secao)),
+  # #                      tipo_pessoa = factor(input$m_tipo_pessoa, levels = unique(d_vis$tipo_pessoa)),
+  # #                      tipo = factor(input$m_tipo, levels = unique(d_vis$tipo)),
+  # #                      tributos = factor(input$m_tributos, levels = unique(d_vis$tributos)))
+  # #      d
+  # #    }
+  # #  })
+  
+})

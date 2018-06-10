@@ -1,0 +1,18 @@
+x<-tabela_modelo %>%
+  filter(!is.na(resultado),
+         !is.na(UF),
+         !is.na(TURMA),
+         !is.na(SECAO),
+         !is.na(TIPO_RECURSO),
+         !is.na(TIPO_PESSOA),
+         !is.na(tipo)
+         ) %>%
+  mutate(resp = predict(fit,.,'response'),
+         resp1= ifelse(resp>0.5,1,0))
+
+z<-confusionMatrix(x$resp1,x$resultado)
+
+k<-table(x$resp1,x$resultado)
+
+
+ab<-tabelao(base = x,p = 'resp',resultado = 'resultado')

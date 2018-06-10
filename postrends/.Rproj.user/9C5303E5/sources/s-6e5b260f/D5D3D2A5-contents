@@ -1,0 +1,1311 @@
+# Bibliotecas e caminhos
+library(magrittr)
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(stringr)
+library(abjutils)
+library(readxl)
+library(shiny)
+library(shinydashboard)
+library(leaflet)
+library(plotly)
+library(DT)
+library(shinyBS)
+
+# DADOS -----------------------------------------------------------------------
+
+setwd("/srv/shiny-server/login_dash")
+
+source("R/utils.R")
+source("R/login.R")
+load("data/login_depositos.rda")
+load("data/login_pedidos.rda")
+load("data/login_processos.rda")
+load("data/login_geo.rda")
+load("data/login_estoque.rda")
+
+login_pedidos %<>% distinct()
+login_processos %<>% distinct()
+login_depositos %<>% distinct()
+#-----------------------------------
+rm_accent <- function(str) {
+
+  if(!is.character(str))
+    str <- as.character(str)
+
+  str <- stringi::stri_escape_unicode(str)
+
+  symbols <- c(
+    acute = stringi::stri_unescape_unicode('\u00e1\u00e9\u00ed\u00f3\u00fa\u00c1\u00c9\u00cd\u00d3\u00da\u00fd\u00dd'),
+    grave = stringi::stri_unescape_unicode('\u00e0\u00e8\u00ec\u00f2\u00f9\u00c0\u00c8\u00cc\u00d2\u00d9'),
+    circunflex = stringi::stri_unescape_unicode('\u00e2\u00ea\u00ee\u00f4\u00fb\u00c2\u00ca\u00ce\u00d4\u00db'),
+    tilde = stringi::stri_unescape_unicode('\u00e3\u00f5\u00c3\u00d5\u00f1\u00d1'),
+    umlaut = stringi::stri_unescape_unicode('\u00e4\u00eb\u00ef\u00f6\u00fc\u00c4\u00cb\u00cf\u00d6\u00dc\u00ff'),
+    cedil = stringi::stri_unescape_unicode('\u00e7\u00c7')
+  )
+
+  nudeSymbols <- c(
+    acute = 'aeiouAEIOUyY',
+    grave = 'aeiouAEIOU',
+    circunflex = 'aeiouAEIOU',
+    tilde = 'aoAOnN',
+    umlaut = 'aeiouAEIOUy',
+    cedil = 'cC'
+  )
+  resp <- chartr(paste(symbols, collapse=""), paste(nudeSymbols, collapse=""), stringi::stri_unescape_unicode(str))
+  return(resp)
+}
+#-----------------------------------
+#Processos estratégicos
+estrategico <- function(cd_int){
+  sensiveis <- c(
+    "PENSAO VITALICIA MENSAL",
+    "EQUIPARACAO SALARIAL",
+    "INDENIZACAO POR DANOS MATERIAIS",
+    "LUCROS CESSANTES"
+  )
+
+  processo <- login_processos %>%
+    select(codigo_interno, razao_social, data_entrada,status) %>%
+    inner_join(login_pedidos, 'codigo_interno') %>%
+    dplyr::filter(codigo_interno == cd_int)
+
+  if (length(processo$pedido) > 0 &&
+      any(processo$pedido %in% sensiveis) &&
+      any(processo$probabilidade_de_perda %in% c("Provável", "Possível"))) {
+
+    processo <- processo %>%
+      mutate(estrategico = 'Estratégico, por conta dos pedidos.' )
+
+  } else if ((str_detect(processo$razao_social[1], "(TVV)") && sum(processo$valor_do_calculista_atualizado,na.rm = T) >= 2336000) |
+             (str_detect(processo$razao_social[1], "(Log-In)") && sum(processo$valor_do_calculista_atualizado,na.rm = T) >= 780000)) {
+
+    processo <- processo %>%
+      mutate(estrategico = "Estratégico, por conta do valor." )
+  } else {
+    processo <- processo %>%
+      mutate(estrategico = "Comum")
+  }
+  return(processo)
+}
+
+processo_estrategico <- map_df(login_pedidos$codigo_interno %>% unique, estrategico)
+
+login_estrategicos <- processo_estrategico %>%
+  select(codigo_interno, estrategico)
+
+# Adicionar colunas com índices
+login_depositos_ <- rownames_to_column(login_depositos, "id_deposito")
+login_pedidos_ <- rownames_to_column(login_pedidos, "id_pedido")
+login_processos_ <- rownames_to_column(login_processos, "id_processo")
+
+# Criar uma tabela unificada para filtros
+login_active <- login_processos_ %>%
+  left_join(login_pedidos_, "codigo_interno") %>%
+  left_join(login_depositos_, "codigo_interno") %>%
+  left_join(login_estrategicos, "codigo_interno") %>%
+  distinct()
+
+# Valores possíveis para os filtros
+login_active <- login_active %>%
+  mutate(empresa = razao_social.x) %>%
+  filter(status == 'ativo')
+
+ano_ <- unique(login_active$ano_pedido) %>% sort
+pedidos_ <- unique(login_active$pedido) %>% sort
+risco_ <- unique(login_active$probabilidade_de_perda) %>% sort
+empresa_ <- unique(login_active$empresa) %>% sort
+data_ini_ <- min(login_active$data_do_pedido, na.rm = TRUE)
+data_fin_ <- max(login_active$data_do_pedido, na.rm = TRUE)
+
+
+# Atalho para selectInput de probabilidade de perda
+
+prob_perda <- purrr::partial(
+  selectInput, label = "Probabilidade de perda",
+  choices = c("POSSIVEL", "PROVAVEL", "REMOTO"),
+  selected = c("POSSIVEL", "PROVAVEL", "REMOTO"),
+  multiple = TRUE, .first = FALSE)
+
+
+# Atalho para purrr::`%||%`
+`%||%` <- purrr::`%||%`
+
+# Upload de arquivos
+options(shiny.maxRequestSize = 10 * 1024 ^ 2)
+
+# processos_ativos <- function(d) {
+#   login_active %>%
+#     distinct(id_processo, .keep_all = TRUE) %>%
+#     pull(status) %>%
+#     stringr::str_detect("ativo") %>%
+#     sum()
+# }
+
+# processos_ativos <- function() {
+#   sum(stringr::str_detect(login_processos$status, "ativo"))
+# }
+#
+# valor_contingencia <- function() {
+#   login_pedidos %>%
+#     dplyr::summarise(total = sum(valor_do_calculista_atualizado, na.rm = TRUE)) %>%
+#     magrittr::extract2(1, 1) %>%
+#     purrr::invoke(scales::dollar_format("R$ ", big.mark = "."), .)
+# }
+#
+# valor_provisao <- function() {
+#   login_pedidos %>%
+#     dplyr::filter(probabilidade_de_perda == "Provável") %>%
+#     dplyr::summarise(total = sum(valor_do_calculista_atualizado, na.rm = TRUE)) %>%
+#     magrittr::extract2(1, 1) %>%
+#     purrr::invoke(scales::dollar_format("R$ ", big.mark = "."), .)
+# }
+
+p_pedidos <- function(tab, stat, vals = c("POSSIVEL", "PROVAVEL", "REMOTO")) {
+
+  d_pedidos_plot <- tab %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      probabilidade_de_perda = probabilidade_de_perda %>%
+        abjutils::rm_accent() %>%
+        stringr::str_to_upper(),
+      pedido = stringr::str_trunc(pedido, 30)) %>%
+    dplyr::filter(probabilidade_de_perda %in% vals) %>%
+    dplyr::group_by(pedido) %>%
+    dplyr::summarise(
+      qtd = length(codigo_interno),
+      media = mean(valor_do_calculista_atualizado),
+      mediana = median(valor_do_calculista_atualizado),
+      valor = sum(valor_do_calculista_atualizado)) %>%
+    dplyr::mutate(
+      valor_prop = valor / sum(valor, na.rm = TRUE),
+      qtd_prop = qtd / sum(qtd, na.rm = TRUE)) %>%
+    tidyr::gather(key, val, -pedido) %>%
+    dplyr::filter(key == dplyr::first(stat)) %>%
+    dplyr::arrange(dplyr::desc(val)) %>%
+    dplyr::mutate(pedido = forcats::fct_reorder(pedido, val)) %>%
+    utils::head(30)
+
+  p_pedidos <- d_pedidos_plot
+  # %>%
+  #   ggplot(aes(x = pedido, y = val)) +
+  #   geom_col() +
+  #   coord_flip() +
+  #   # theme_minimal(16) +
+  #   labs(y = dplyr::first(stat), x = "")
+
+  return(p_pedidos)
+}
+
+p_pagamentos <- function(tab, stat) {
+
+  d_pagamentos_plot <- tab %>%
+    dplyr::mutate(
+      descricao_tipo = dplyr::if_else(
+        descricao_tipo %in% c("Depósito Judicial", "Depósito Recursal"),
+        descricao_tipo, "Outros")) %>%
+    dplyr::group_by(descricao_tipo) %>%
+    dplyr::summarise(
+      qtd = length(codigo_interno),
+      media = mean(valor_garantia_atualizado, na.rm = TRUE),
+      mediana = median(valor_garantia_atualizado, na.rm = TRUE),
+      valor = sum(valor_garantia_atualizado, na.rm = TRUE)) %>%
+    dplyr::mutate(
+      valor_prop = valor / sum(valor, na.rm = TRUE),
+      qtd_prop = qtd / sum(qtd, na.rm = TRUE)) %>%
+    tidyr::gather(key, val, -descricao_tipo) %>%
+    dplyr::filter(key == dplyr::first(stat)) %>%
+    dplyr::arrange(dplyr::desc(val)) %>%
+    dplyr::mutate(val = as.numeric(val),
+                  pedido = forcats::fct_reorder(descricao_tipo, val)) %>%
+    utils::head(30)
+
+  p_pagamentos <- d_pagamentos_plot
+  # %>%
+  #   ggplot(aes(x = descricao_tipo, y = val)) +
+  #   geom_col() +
+  #   coord_flip() +
+  #   # theme_minimal(16) +
+  #   labs(y = dplyr::first(stat), x = "")
+
+  return(p_pagamentos)
+}
+
+
+login_processos_datas <- login_active %>%
+  distinct(id_processo, .keep_all = TRUE) %>%
+  left_join(login_estoque, by = 'codigo_interno')
+
+login_processos_datas <- login_active %>%
+  distinct(id_processo, .keep_all = TRUE) %>%
+  left_join(login_estoque, by = 'codigo_interno')
+
+processos <- login_processos_datas %>%
+  filter(!is.na(data_entrada.y)) %>%
+  mutate(data_encerramento = if_else(is.na(data_encerramento), as.POSIXct("2020-01-01"), data_encerramento))
+
+calcula_estoque <- function(day, data_set){
+
+  vivos <- data_set %>%
+    filter(data_entrada.y <= day, data_encerramento > day) %>%
+    nrow()
+
+  entraram_total <- data_set %>%
+    filter(data_entrada.y <= day) %>%
+    nrow()
+
+  mortos_total <- data_set %>%
+    filter(data_encerramento <= day) %>%
+    nrow()
+
+  tibble(day, vivos, entraram_total, mortos_total)
+}
+
+gera_estoque <- function(d, label, ...){
+
+  aux <- d %>%
+    filter(...)
+
+  purrr::map_df(as.Date("2012-01-01") + months(1:73),
+                ~calcula_estoque(.x, aux)) %>%
+    mutate(entradas = c(0,diff(entraram_total)),
+           mortes = c(0,diff(mortos_total)),
+           tipo = label)
+}
+
+estoque_outros <- gera_estoque(processos, "Outros", !eisa)
+estoque_eisa <- gera_estoque(processos, "EISA", eisa)
+estoque_tvv_eisa <- gera_estoque(processos, "TVV_EISA", processos$eisa, str_detect(razao_social.x, "TVV"))
+estoque_login_eisa <- gera_estoque(processos, "Login_EISA", eisa, str_detect(razao_social.x, "Log-In"))
+estoque_tvv_outros <- gera_estoque(processos, "TVV_Outros", !eisa, str_detect(razao_social.x, "TVV"))
+estoque_login_outros <- gera_estoque(processos, "Login_Outros", !eisa, str_detect(razao_social.x, "Log-In"))
+estoque_total <- gera_estoque(processos, "Total")
+
+p_estoque <- function(stat) {
+
+  xaxis = list(title = '',tickformat = '%')
+  yaxis = list(title = '')
+
+  if (stat == "quebrado") {
+    p <- bind_rows(estoque_login_outros,
+                   estoque_tvv_eisa,
+                   estoque_tvv_outros,
+                   estoque_login_eisa) %>%
+      filter(day >= as.Date("2017-01-01")) %>%
+      ggplot(aes(x = day, y = vivos, color = tipo)) +
+      geom_line() +
+      ylab("Número de processos ativos") +
+      xlab("Mês") +
+      theme_bw() +
+      theme(legend.position = 'bottom')
+
+    ggplotly(p) %>%
+      add_text(
+        text = ~paste0(
+          '</br>Trimestre: ', day,
+          '</br>Quantidade: ', vivos,
+          '</br>Tipo: ', tipo)) %>%
+      layout(legend = list(orientation = 'h', y = 1.2))
+
+  } else if (stat == "total") {
+    p <- bind_rows(estoque_total) %>%
+      filter(day >= as.Date("2017-01-01")) %>%
+      ggplot(aes(x = day, y = vivos, color = tipo)) +
+      geom_line() +
+      ylab("Número de processos ativos") +
+      xlab("Mês") +
+      theme_bw() +
+      theme(legend.position = 'bottom')
+
+    ggplotly(p) %>%
+      add_text(
+        text = ~paste0(
+          '</br>Trimestre: ', day,
+          '</br>Quantidade: ', vivos,
+          '</br>Tipo: ', tipo)) %>%
+      layout(legend = list(orientation = 'h', y = 1.2))
+  } else if (stat == "estoque") {
+    p <- bind_rows(estoque_outros, estoque_eisa) %>%
+      filter(day >= as.Date("2017-01-01")) %>%
+      ggplot(aes(x = day, y = vivos, color = tipo)) +
+      geom_line() +
+      ylab("Número de processos ativos") +
+      xlab("Mês") +
+      theme_bw() +
+      theme(legend.position = 'bottom')
+
+    ggplotly(p) %>%
+      add_text(
+        text = ~paste0(
+          '</br>Trimestre: ', day,
+          '</br>Quantidade: ', vivos,
+          '</br>Tipo: ', tipo)) %>%
+      layout(legend = list(orientation = 'h', y = 1.2))
+  } else if (stat == "iad") {
+    p <- bind_rows(estoque_outros, estoque_eisa) %>%
+      mutate(day = lubridate::floor_date(day, "quarter")) %>%
+      filter(day >= as.Date("2017-01-01")) %>%
+      mutate(iad = entradas/(mortes+1)) %>%
+      ggplot(aes(factor(day), iad, fill = factor(tipo))) +
+      geom_col(position = "dodge") +
+      ylab("Entradas/(Baixados+1)") +
+      xlab("Trimestre") +
+      theme_bw() +
+      theme(legend.position = 'bottom') +
+      scale_fill_discrete(name = "Tipo")
+
+    ggplotly(p) %>%
+      layout(legend = list(orientation = 'h', y = 1.2))
+  }
+}
+
+# p_mapa <- function(tab, vals = c("POSSIVEL", "PROVAVEL", "REMOTO")) {
+#
+#   d_map <- tab %>%
+#     filter(probabilidade_de_perda %in% vals) %>%
+#     mutate(polo = if_else(contigencia_ativa_valor_total_atualizado_valor >
+#                             contigencia_passiva_valor_total_atualizado_valor,
+#                           "Ativo", "Passivo"),
+#            qual_contingencia_ativa = radiant.data::which.pmax(
+#              contigencia_ativa_valor_total_atualizado_remoto,
+#              contigencia_ativa_valor_total_atualizado_provavel,
+#              contigencia_ativa_valor_total_atualizado_possivel
+#            ), qual_contingencia_ativa = opcoes[qual_contingencia_ativa],
+#            qual_contingencia_passiva = radiant.data::which.pmax(
+#              contigencia_passiva_valor_total_atualizado_remoto,
+#              contigencia_passiva_valor_total_atualizado_provavel,
+#              contigencia_passiva_valor_total_atualizado_possivel
+#            ), qual_contingencia_passiva = opcoes[qual_contingencia_passiva]) %>%
+#     select(area_do_direito, esfera, status, numero_do_processo,
+#            unidade_de_contrato.y, unidade,
+#            tipo_de_contingencia, qual_contingencia_passiva,
+#            contigencia_passiva_valor_total_atualizado_valor,
+#            lat, lon)
+#   tile <- "http://{s}.tiles.mapbox.com/v3/jtrecenti.map-oskm8vhn/{z}/{x}/{y}.png"
+#   d_map %>%
+#     filter(!is.na(lat)) %>%
+#     mutate(
+#       label = glue::glue(
+#         "Processo: {numero_do_processo}<br/>",
+#         "Esfera: {esfera}<br/>",
+#         "Status: {status}<br/>",
+#         "Contingência: {qual_contingencia_passiva}<br/>",
+#         "Valor: {scales::dollar(contigencia_passiva_valor_total_atualizado_valor)}<br/>"
+#       )) %>%
+#     leaflet() %>%
+#     addTiles(tile) %>%
+#     addMarkers(popup = ~label, clusterOptions = markerClusterOptions())
+# }
+
+#### Controles
+
+# - [1] Data de distribuição (dados)
+# - [1] Grupo de pedidos
+# - [1] Contingência (possível, provável, remoto)
+# - [1] Empresa (TVV/Login)
+# - [2] Região (TRT/Comarca)
+
+# Julio
+# - [2] Tipo (administrativo ou judicial)
+# - [1] Fase (instância)
+# - [1] EISA (sim/não)
+
+#### Views
+
+# Caio
+# 1. [1] Indicadores (retângulos)
+#   - Volume de ativos
+#   - Valor de contingência
+#   - Valor provisionado
+#   - IAD acumulado (meta)
+# 2. [1] Proporção de pagamentos por tipo
+#   - Gráfico de barras
+# 3. [1] Proporção de pedidos por tipo
+#   - Gráfico de barras
+
+# Daleffi
+# 5. [2] Evolução de pedidos
+#   - Abas
+#     - proporção de assuntos (pedidos) no tempo
+#       - por valor
+#       - por quantidade
+# 6. [2] Processos estratégicos
+#   - Listar num DT
+
+# Pendente
+# 4. [1] Estoque de processos
+#   - Abas
+#     - IAD acumulado
+#     - taxa de congestionamento
+#     - evolução do estoque
+#   - Observação
+#     - Estoque anterior: 538 processos
+#     - Meta: baixar 54 + .15 * entrada
+# 7. [3] Mapa
+#   - markerCluster de Varas
+
+### GERAL ---------------------------------------------------------------------
+
+# Setar CWD
+
+# cwds <- c("/Users/ctlente/Documents/Dev/Estre",
+#           "/home/jtrecenti/Documents/login")
+# if (!getwd() %in% cwds) {
+#   setwd("/srv/shiny-server/estre_temp/")
+# }
+
+
+
+# app-ui -----------------------------------------------------------------------
+ui <- dashboardPage(
+  dashboardHeader(
+    title = "Login"
+  ),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Log-in", tabName = 'login', icon = icon('power-off')),
+      menuItem("Principal", tabName = "dashboard", icon = icon("home")),
+      menuItem("Upload", tabName = "upload", icon = icon("upload"))
+    ),
+    fluidRow(
+      # controles
+      dateRangeInput(
+        'sel_data', 'Data de publicação entre',
+        format = 'dd/mm/yyyy', language = 'pt-BR',
+        separator = ' e '),
+      selectizeInput(
+        "sel_pedidos", label = "Classes De Pedidos",
+        choices = '',  multiple = TRUE),
+      selectizeInput(
+        "sel_risco", label = "Probabilidade De Perda",
+        choices = '',  multiple = TRUE),
+      selectizeInput(
+        "sel_empresa", label = "Empresa Responsável",
+        choices = '',  multiple = TRUE)
+
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(
+        tabName = 'login',
+        box(width = 4,
+            textInput('user','Usuário: ',
+                      placeholder = 'Usuário'),
+            passwordInput('pass','Senha: ',
+                          placeholder = 'Senha'),
+            bsButton('conectar',
+                     label = 'Conectar',
+                     icon = icon("sign-in")),
+            bsButton('status_conectar',
+                     label = 'Desconectado',
+                     style = 'danger',
+                     icon = icon("times"))
+        )
+
+      ),
+
+      tabItem(
+        tabName = "dashboard",
+        # retangulos coloridos -------------------------------------------------
+        fluidRow(
+          valueBoxOutput("qtde",width = 3),
+          valueBoxOutput("contingencia", width = 3),
+          valueBoxOutput("provisao", width = 3),
+          valueBoxOutput("iiad", width = 3)
+          # valueBoxOutput("atendimento", "Baixas / entradas", width = 3, color = "red")
+        ),
+        checkboxInput("quebrados", "Mostrar valores quebrados?"),
+        conditionalPanel(
+          condition = "input.quebrados",
+          fluidRow(
+            column(2,
+                   selectInput("quebra", label = "Quebrar por",
+                               choices = c("empresa", "eisa"),
+                               selected = "empresa", multiple = FALSE)
+            ),
+            column(3, tableOutput("tab_qtde")),
+            column(3, tableOutput("tab_contingencia")),
+            column(3, tableOutput("tab_provisao")),
+            column(3, tableOutput("tab_atendimento"))
+          )
+        ),
+
+        # estoque e pedidos ----------------------------------------------------
+        fluidRow(
+          tabBox(
+            title = "Vazão",
+            tabPanel(
+              title = "Estoque Quebrado",
+              plotlyOutput("estoque_quebrado")),
+            tabPanel(
+              title = "Estoque Total",
+              plotlyOutput("estoque_total")),
+            tabPanel(
+              title = "Estoque",
+              plotlyOutput("estoque")),
+            tabPanel(
+              title = "IAD",
+              plotlyOutput("iad"))),
+
+          box(title = "Mapa", leafletOutput("geo_estados"))
+        ),
+
+        # Pagamentos e mapa ----------------------------------------------------
+        fluidRow(
+          tabBox(title = "Pagamentos",
+                 tabPanel(title = "Quantidade",
+                          plotlyOutput("pgto_qtd", height = 800)),
+                 tabPanel(title = "Valor mediano",
+                          plotlyOutput("pgto_median", height = 800)),
+                 tabPanel(title = "Valor total",
+                          plotlyOutput("pgto_valor", height = 800)),
+                 tabPanel(title = "% total",
+                          plotlyOutput("pgto_prop_total", height = 800)),
+                 tabPanel(title = "% valor total",
+                          plotlyOutput("pgto_prop_vl", height = 800))),
+
+          tabBox(
+            title = "Pedidos/Ofensores",
+            tabPanel(
+              title = "Quantidade",
+              prob_perda("p_perda_qtd"),
+              plotlyOutput("pedidos_qtd", height = 800)),
+            tabPanel(
+              title = "Valor mediano",
+              prob_perda("p_perda_mediana"),
+              plotlyOutput("pedidos_mediana", height = 800)),
+            tabPanel(
+              title = "Valor total",
+              prob_perda("p_perda_valor"),
+              plotlyOutput("pedidos_valor", height = 800)),
+            tabPanel(
+              title = "% total",
+              prob_perda("p_perda_prop_total"),
+              plotlyOutput("pedidos_prop_total", height = 800)),
+            tabPanel(
+              title = "% valor total",
+              prob_perda("p_perda_prop_valor"),
+              plotlyOutput("pedidos_prop_valor", height = 800)))
+        ),
+
+        # Evolução dos pedidos -------------------------------------------------
+        fluidRow(
+          tabBox(title = "Evolução dos pedidios", width = 12,
+                 tabPanel(title = "Quantidade", plotlyOutput("pedidos_tempo_qtd")),
+                 tabPanel(title = "Valor", plotlyOutput("pedidos_tempo_vl")))
+        ),
+
+        # Processos estratégicos -----------------------------------------------
+        fluidRow(
+          box(title = "Processos Estratégicos", width = 12,
+              DT::DTOutput("estrategicos"))
+        )
+      ),
+      # Upload de planilhas ----------------------------------------------------
+      tabItem(
+        tabName = "upload",
+        titlePanel("Subir Arquivos"),
+
+        sidebarLayout(
+          # controles
+          sidebarPanel(
+            # Entrada de arquivo
+            fileInput(
+              "file1", "Escolher Arquivo XLSX",
+              multiple = FALSE,
+              accept = c(".xlsx")),
+            # Linha horizontal
+            tags$hr(),
+            # Escolher o tipo arquivo
+            radioButtons(
+              "file2", "Tipo do Arquivo",
+              choices = c(
+                "Ativos" = "ativos.xlsx",
+                "Encerrados" = "encerrados.xlsx",
+                "Depositos" = "depositos.xlsx")),
+            # Linha horizontal
+            tags$hr(),
+            # Salvar base
+            actionButton("save", "Salvar Base"),
+            actionButton("restart", "Recarregar Bases")
+          ),
+          # Painel principal
+          mainPanel(dataTableOutput("contents"))
+        )
+      )
+
+    )
+  )
+)
+
+server <- function(input, output,session) {
+
+  #Conexão
+  con <- eventReactive(input$conectar,{
+    if(input$user == 'admin' & input$pass == 'admin')
+    {con = 1}
+    else
+    {con = 0}
+
+    return(con)
+  })
+
+  observe({
+    if(con() != 0) { #conexao bem sucedida...
+      status_conexao_label = "Conectado"
+      status_conexao_style = "success"
+      status_conexao_icon = icon("check")
+    }
+    else {
+      status_conexao_label = "Desconectado"
+      status_conexao_style = "danger"
+      status_conexao_icon = icon("times")
+    }
+    updateButton(session, "status_conectar",
+                 label =status_conexao_label,
+                 style = status_conexao_style,
+                 icon = status_conexao_icon)
+  })
+
+  #Update selectinput dos filtros
+  observe({
+    if(con() == 1){
+      updateDateRangeInput(
+        session, 'sel_data',
+        start = data_ini_,
+        end = data_fin_,
+        min = data_ini_,
+        max = data_fin_)
+
+      updateSelectizeInput(session,
+                           'sel_pedidos',
+                           choices = pedidos_,
+                           selected = pedidos_)
+
+      updateSelectizeInput(session,
+                           'sel_risco',
+                           choices = risco_,
+                           selected = risco_)
+
+      updateSelectizeInput(session,
+                           'sel_empresa',
+                           choices = empresa_,
+                           selected = empresa_)
+
+    }
+  })
+
+
+  #--------------------
+
+  #Sobe base de dados apenas se houver conexao
+
+  # log_ped <- reactive({
+  #   if(con() == 1){
+  #     pedidos <- login_pedidos
+  #   }
+  #   return(pedidos)
+  # })
+  #
+  # log_proc <- reactive({
+  #   if(con() == 1){
+  #     processos <- login_processos
+  #   }
+  #   return(processos)
+  # })
+  #
+  # log_dep <- reactive({
+  #   if(con() == 1){
+  #     depositos <- login_depositos
+  #   }
+  #   return(depositos)
+  # })
+
+
+  # log_proc_estr <- reactive({
+  #   if(con() == 1){
+  #     proc_estr <- processo_estrategico
+  #   }
+  #   return(proc_estr)
+  # })
+
+  # filtros na base de dados
+  login_reactive <- reactive({
+
+    if(con() == 1){
+
+      login_active %>%
+        mutate(data_pedido = data_do_pedido >= lubridate::ymd(input$sel_data[1]) & data_do_pedido <= lubridate::ymd(input$sel_data[2])) %>%
+        filter(
+          is.na(data_pedido) | data_pedido,
+          is.na(pedido) | pedido %in% (input$sel_pedidos %||% pedidos_),
+          is.na(probabilidade_de_perda) | probabilidade_de_perda %in% (input$sel_risco %||% risco_),
+          is.na(empresa) | empresa %in% (input$sel_empresa %||% empresa_)) %>%
+        select(-data_pedido) %>%
+        distinct()
+    }
+  })
+
+
+  # Retângulos com métricas
+  output$qtde <- renderValueBox({
+    p_ativo <- login_reactive() %>%
+      # filter(status == 'ativo') %>%
+      select(codigo_interno) %>%
+      distinct()
+
+    p_ativo <- nrow(p_ativo)
+
+    valueBox(subtitle = 'Processos Ativos',
+             value = p_ativo,
+             color = 'navy',
+             icon = icon('hashtag'))
+
+  })
+  output$contingencia <- renderValueBox({
+    cont <- login_reactive() %>%
+      distinct(id_pedido, .keep_all = TRUE) %>%
+      dplyr::summarise(total = sum(valor_do_calculista_atualizado, na.rm = TRUE)) %>%
+      magrittr::extract2(1, 1) %>%
+      purrr::invoke(scales::dollar_format("R$ ", big.mark = "."), .)
+
+    valueBox(subtitle = 'Contingência',
+             value = tags$p(cont, style ="font-size: 80%;"),
+             color = "blue",
+             icon = icon('dollar'))
+  })
+
+  output$provisao <- renderValueBox({
+    prov <- login_reactive() %>%
+      distinct(id_pedido, .keep_all = TRUE) %>%
+      dplyr::filter(probabilidade_de_perda == "Provável") %>%
+      dplyr::summarise(total = sum(valor_do_calculista_atualizado, na.rm = TRUE)) %>%
+      magrittr::extract2(1, 1) %>%
+      purrr::invoke(scales::dollar_format("R$ ", big.mark = "."), .)
+
+    valueBox(subtitle = 'Provisão',
+             value = tags$p(prov, style ="font-size: 80%;"),
+             color = "purple",
+             icon = icon('dollar'))
+
+  })
+  output$iiad <- renderValueBox({
+
+    estoque_hoje <- tail(estoque_total, 1)[["vivos"]]
+    ano_hoje <- year(tail(estoque_total, 1)[["day"]])
+    estoque_ontem <- tail(filter(estoque_total, year(day) == ano_hoje-1), 1)[["vivos"]]
+
+    valueBox(subtitle = 'Baixas Até A Meta',
+             value = ceiling(estoque_hoje - 0.85 * estoque_ontem),
+             color = "maroon",
+             icon = icon('hashtag'))
+
+  })
+
+  # Pedidos/Ofensores
+  output$pedidos_qtd <- renderPlotly({
+
+    plot <- p_pedidos(tab = login_reactive(),
+                      stat = "qtd",
+                      vals = input$p_perda_qtd)
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~pedido,
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Pedido: ', pedido,
+                           '</br>Volume: ', val),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 200),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+
+    # ggplotly(p_pedidos(log_ped(),"qtd", input$p_perda_qtd))
+  })
+  output$pedidos_mediana <- renderPlotly({
+
+    plot <- p_pedidos(login_reactive(),"mediana", input$p_perda_mediana)
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~pedido,
+            mode = 'bar',
+
+            hoverinfo = 'text',
+            text = ~paste0('</br>Pedido: ', pedido,
+                           '</br>Valor: R$ ',format(round(as.numeric(val),3), nsmall=1, big.mark=",")),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 200),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pedidos(log_ped(),"mediana", input$p_perda_mediana))
+  })
+  output$pedidos_valor <- renderPlotly({
+
+    plot <- p_pedidos(login_reactive(),"valor", input$p_perda_valor)
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~pedido,
+            mode = 'bar',
+
+            hoverinfo = 'text',
+            text = ~paste0('</br>Pedido: ', pedido,
+                           '</br>Valor: R$ ',format(round(as.numeric(val),3), nsmall=1, big.mark=",")),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 200),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pedidos(log_ped(),"valor", input$p_perda_valor))
+  })
+  output$pedidos_prop_total <- renderPlotly({
+
+    plot <- p_pedidos(login_reactive(),"qtd_prop", input$p_perda_prop_total)
+
+    xaxis = list(title = '',tickformat = '%')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~pedido,
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Pedido: ', pedido,
+                           '</br>Prop: ', scales::percent(val)),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 200),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pedidos(log_ped(),"qtd_prop", input$p_perda_prop_total))
+  })
+  output$pedidos_prop_valor <- renderPlotly({
+
+    plot <- p_pedidos(login_reactive(),"valor_prop", input$p_perda_prop_valor)
+
+    xaxis = list(title = '',tickformat = '%')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~pedido,
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Pedido: ', pedido,
+                           '</br>Prop: ', scales::percent(val)),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 200),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pedidos(log_ped(),"valor_prop", input$p_perda_prop_valor))
+  })
+
+  # Pagamentos
+  output$pgto_qtd <- renderPlotly({
+
+    plot <- p_pagamentos(login_reactive(),"qtd")
+
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~reorder(descricao_tipo, val),
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Tipo de Descricao: ', descricao_tipo,
+                           '</br>Volume: ', val),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 150),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pagamentos(log_dep(), "qtd"))
+  })
+  output$pgto_median <- renderPlotly({
+
+    plot <- p_pagamentos(login_reactive(),"mediana")
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~reorder(descricao_tipo, val),
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Tipo de Descricao: ', descricao_tipo,
+                           '</br>Valor: R$ ',format(round(as.numeric(val),3), nsmall=1, big.mark=",")),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 150),
+             xaxis=xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pagamentos(log_dep(),"mediana"))
+  })
+  output$pgto_valor <- renderPlotly({
+
+    plot <- p_pagamentos(login_reactive(),"valor")
+
+    xaxis = list(title = '')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~reorder(descricao_tipo, val),
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Tipo de Descricao: ', descricao_tipo,
+                           '</br>Valor: R$ ',format(round(as.numeric(val),3), nsmall=1, big.mark=",")),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 150),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pagamentos(log_dep(),"valor"))
+  })
+  output$pgto_prop_total <- renderPlotly({
+
+    plot <- p_pagamentos(login_reactive(),"qtd_prop")
+
+    xaxis = list(title = '',tickformat = '%')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~reorder(descricao_tipo, val),
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Tipo de Descricao: ', descricao_tipo,
+                           '</br>Prop: ', scales::percent(val)),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 150),
+             xaxis = xaxis,
+             yaxis = yaxis)
+
+    # ggplotly(p_pagamentos(log_dep(),"qtd_prop"))
+  })
+  output$pgto_prop_vl <- renderPlotly({
+
+    plot <- p_pagamentos(login_reactive(),"valor_prop")
+
+    xaxis = list(title = '',tickformat = '%')
+    yaxis = list(title = '')
+
+    plot_ly(plot,
+            x=~val,
+            y=~reorder(descricao_tipo, val),
+            mode = 'bar',
+            hoverinfo = 'text',
+            text = ~paste0('</br>Tipo de Descricao: ', descricao_tipo,
+                           '</br>Prop: ', scales::percent(val)),
+            orientation = 'h',
+            marker = list(color = '#000080')) %>%
+      layout(margin = list(l = 150),
+             xaxis=xaxis,
+             yaxis=yaxis)
+
+    # ggplotly(p_pagamentos("valor_prop"))
+  })
+
+  output$estoque_quebrado <- renderPlotly({
+    p_estoque("quebrado")
+  })
+  output$estoque_total <- renderPlotly({
+    p_estoque("total")
+  })
+  output$estoque <- renderPlotly({
+    p_estoque("estoque")
+  })
+  output$iad <- renderPlotly({
+    p_estoque("iad")
+  })
+
+  output$geo_estados <- renderLeaflet({
+
+    tile <- "http://{s}.tiles.mapbox.com/v3/jtrecenti.map-oskm8vhn/{z}/{x}/{y}.png"
+
+    login_reactive() %>%
+      distinct(id_processo, .keep_all = TRUE) %>%
+      mutate(
+        trt = str_extract(numero_processo, "[0-9]{2}(?=\\.[0-9]{4}$)")) %>%
+      left_join(login_geo, "trt") %>%
+      group_by(trt) %>%
+      summarise(
+        qtd = length(id_processo),
+        estado = estado[1],
+        lat = lat[1], lng = lng[1]) %>%
+      mutate(
+        label = glue::glue(
+          "Quantidade: {qtd}<br/>",
+          "Estado: {estado}<br/>")) %>%
+      leaflet() %>%
+      addTiles(tile) %>%
+      # addMarkers(popup = ~label, clusterOptions = markerClusterOptions())
+      addMarkers(popup = ~label)
+  })
+
+  output$contents <- renderDataTable({
+
+    # Arquivo subido
+    req(input$file1)
+    skip <- switch (input$file2,
+                    "ativos.xlsx" = 1,
+                    "encerrados.xlsx" = 1,
+                    "depositos.xlsx" = 1)
+
+    ## Ler a tabela
+    # df <- read_login_table_(
+    #   input$file1$datapath, dir = "",
+    #   skip = skip, sheet = NULL,
+    #   col_types = "text")
+
+    return(head(df, 20)[, 1:5])
+  })
+
+  # Aguardar clique no botão do upload da base
+  observeEvent(input$save, {
+
+    # Criar nome do arquivo
+    new_file <- stringr::str_c(
+      "data-raw/client/",
+      stringr::str_remove_all(lubridate::now(), "[^[0-9]]"),
+      "_", input$file2)
+
+    # Copiar a tabela para o lugar apropriado
+    file.copy(input$file1$datapath, new_file)
+
+    if (choose_file(input$file2, new_file) == "") {
+      # Falha
+      file.remove(new_file)
+      showNotification("Base não bate com o formato esperado! Tente novamente.",
+                       duration = 5, type = "error")
+    } else {
+      # Sucesso
+      showNotification("Nova base salva!", duration = 5, type = "message")
+    }
+  })
+
+  # server.R
+  observeEvent(input$restart, {
+    source("R/utils.R")
+    source("R/login.R")
+    withProgress(message = "Gerando Bases", value = 0, {
+      # incProgress(0.2, detail = "Deletando Arquivos Antigos")
+      # ...
+    })
+    source("R/utils.R")
+    source("R/login.R")
+    load("data/login_depositos.rda")
+    load("data/login_pedidos.rda")
+    load("data/login_processos.rds")
+  })
+
+  ## Evolução dos Pedidos - Quantidade
+  output$pedidos_tempo_qtd <- renderPlotly({
+
+    pedidos <- login_reactive() %>%
+      select(pedido,codigo_interno,data_do_pedido) %>%
+      filter(!is.na(data_do_pedido), data_do_pedido > ymd('20120101')) %>%
+      distinct() %>%
+      mutate(pedido =ifelse(str_length(pedido) > 30, paste0(str_sub(pedido, end = 30),'...'), pedido),
+             quadrimestre = case_when(month(data_do_pedido) %in% c(1,2,3,4) ~ sprintf('%s - 1º Qua', year(data_do_pedido)),
+                                      month(data_do_pedido) %in% c(5,6,7,8) ~ sprintf('%s - 2º Qua', year(data_do_pedido)),
+                                      month(data_do_pedido) %in% c(9,10,11,12) ~ sprintf('%s - 3º Qua', year(data_do_pedido))),
+
+             semestre = case_when(month(data_do_pedido) %in% c(1,2,3,4,5,6) ~ sprintf('%s - 1º Sem', year(data_do_pedido)),
+                                  month(data_do_pedido) %in% c(7,8,9,10,11,12) ~ sprintf('%s - 2º Sem', year(data_do_pedido)))) %>%
+      group_by(semestre, pedido) %>%
+      summarise(Freq = n()) %>%
+      ungroup %>%
+      mutate(pedido = ifelse(Freq <= 2, 'OUTROS', pedido)) %>%
+      group_by(semestre, pedido) %>%
+      summarise(Freq = sum(Freq)) %>%
+      mutate(P = Freq/sum(Freq),
+             Prop = scales::percent(P)) %>%
+      group_by(semestre) %>%
+      mutate(Volume_total = sum(Freq))
+
+    #--------- legenda do plotly
+    legend <- list(font = list(family = "sans-serif",
+                               size = 9,
+                               color = 'black'),
+                   x = 5)
+
+
+    #--------- Eixos do plotly
+    yaxis = list(title = 'Volume')
+    xaxis = list(title = 'Semestre')
+
+
+    #--------- Dropdown menu do plotly
+    updatemenu <- list(
+      list(x = -0.1,
+           y = 1,
+           buttons = list(
+
+             list(method = 'restyle',
+                  args = list('type', 'bar'),
+                  label = 'Barras'),
+
+             list(method = 'restyle',
+                  args = list('type', 'scatter'),
+                  label = 'Linhas')
+           ))
+    )
+
+    #--------- Plotly
+    plot_ly(pedidos,
+            x= ~ semestre,
+            y = ~Freq) %>%
+      add_trace(
+        hoverinfo = 'text',
+        text = ~paste0('</br> Pedido: ', pedido,
+                       '</br> Semestre: ', semestre,
+                       '</br> Volume: ', Freq,
+                       '</br> Volume do semestre: ', Volume_total,
+                       '</br> Prop: ', Prop),
+        type = 'bar',
+        mode = 'lines+markers',
+        marker = list(line = list(color = 'black', width = 1.5)),
+        color = ~pedido,
+        alpha = 0.8) %>%
+      layout(title = sprintf('Volume de assuntos no tempo'),
+             yaxis = yaxis,
+             xaxis = xaxis,
+             legend = legend,
+             margin =list(b = 100, r = 0, t = 50),
+             updatemenus = updatemenu,
+             barmode = 'stack')
+
+
+  })
+
+  #------------------------------------------------------
+  ## Evolução dos Pedidos - Valor
+  output$pedidos_tempo_vl <- renderPlotly({
+
+    pedidos <- login_reactive() %>%
+      select(pedido,codigo_interno,data_do_pedido, valor_do_calculista_atualizado) %>%
+      filter(!is.na(data_do_pedido), data_do_pedido > ymd('20120101')) %>%
+      distinct() %>%
+      mutate(pedido =ifelse(str_length(pedido) > 30, paste0(str_sub(pedido, end = 30),'...'), pedido),
+             quadrimestre = case_when(month(data_do_pedido) %in% c(1,2,3,4) ~ sprintf('%s - 1º Qua', year(data_do_pedido)),
+                                      month(data_do_pedido) %in% c(5,6,7,8) ~ sprintf('%s - 2º Qua', year(data_do_pedido)),
+                                      month(data_do_pedido) %in% c(9,10,11,12) ~ sprintf('%s - 3º Qua', year(data_do_pedido))),
+
+             semestre = case_when(month(data_do_pedido) %in% c(1,2,3,4,5,6) ~ sprintf('%s - 1º Sem', year(data_do_pedido)),
+                                  month(data_do_pedido) %in% c(7,8,9,10,11,12) ~ sprintf('%s - 2º Sem', year(data_do_pedido)))) %>%
+      group_by(semestre, pedido) %>%
+      summarise(Valor_total = sum(valor_do_calculista_atualizado,na.rm = T)) %>%
+      ungroup %>%
+      mutate(pedido = ifelse(Valor_total <= 100000, 'OUTROS', pedido)) %>%
+      group_by(semestre, pedido) %>%
+      summarise(Valor_total = sum(Valor_total)) %>%
+      mutate(P = Valor_total/sum(Valor_total),
+             Prop = scales::percent(P)) %>%
+      group_by(semestre) %>%
+      mutate(Volume_total = sum(Valor_total))
+
+    #--------- legenda do plotly
+    legend <- list(font = list(family = "sans-serif",
+                               size = 9,
+                               color = 'black'),
+                   x = 5)
+
+
+    #--------- Eixos do plotly
+    yaxis = list(title = 'Valor')
+    xaxis = list(title = 'Semestre')
+
+
+    #--------- Dropdown menu do plotly
+    updatemenu <- list(
+      list(x = -0.1,
+           y = 1,
+           buttons = list(
+
+             list(method = 'restyle',
+                  args = list('type', 'bar'),
+                  label = 'Barras'),
+
+             list(method = 'restyle',
+                  args = list('type', 'scatter'),
+                  label = 'Linhas')
+           ))
+    )
+
+    #--------- Plotly
+    plot_ly(pedidos,
+            x= ~ semestre,
+            y = ~Valor_total) %>%
+      add_trace(
+        hoverinfo = 'text',
+        text = ~paste0('</br> Pedido: ', pedido,
+                       '</br> Semestre: ', semestre,
+                       '</br> Valor total do assunto: R$ ', format(round(as.numeric(Valor_total),4), nsmall=1, big.mark=","),
+                       '</br> Valor total do semestre: R$ ', format(round(as.numeric(Volume_total),4), nsmall=1, big.mark=","),
+                       '</br> Prop: ', Prop),
+        type = 'bar',
+        mode = 'lines+markers',
+        marker = list(line = list(color = 'black', width = 1.5)),
+        color = ~pedido,
+        alpha = 0.8) %>%
+      layout(title = sprintf('Valor total por pedido no tempo'),
+             yaxis = yaxis,
+             xaxis = xaxis,
+             legend = legend,
+             margin =list(b = 100, r = 0, t = 50),
+             updatemenus = updatemenu,
+             barmode = 'stack')
+
+  })
+
+  #-------------------------------
+  #Processos Estratégicos
+  output$estrategicos <- DT::renderDT({
+    dados<- login_reactive() %>%
+      select(Codigo = codigo_interno,
+             Status = status,
+             # `Data de Entrada` = data_entrada,
+             `Razao Social`=razao_social.x,
+             `Pedido` = pedido,
+             `Probabilidade de Perda` = probabilidade_de_perda,
+             `Valor atualizado` = valor_do_calculista_atualizado,
+             `Estratégico` = estrategico) %>%
+      DT::datatable(rownames = F,
+                    filter = 'top',
+                    options = list(columnDefs = list(list(className = 'dt-center', targets = 0:6)))) %>%
+      formatCurrency('Valor atualizado', currency = "R$ ", interval = 3, mark = ",",
+                     digits = 2, dec.mark = getOption("OutDec"), before = TRUE)
+
+  })
+}
+
+shinyApp(ui, server)
