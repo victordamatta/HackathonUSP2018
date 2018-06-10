@@ -1,4 +1,4 @@
-import csv, re, join_bigrams, consts, json
+import csv, re, join_bigrams, consts, json, copy
 from inflector import Inflector
 from collections import OrderedDict
 
@@ -15,7 +15,7 @@ def get_match_level(query_word, row):
                     return level
     return consts.NOT_FOUND
 
-def get_search_results(query, data, exact_match = False):
+def get_search_results(query, exact_match = False):
     query = join_bigrams.bigramar(query.lower(), bigrams)
     query = [query] if exact_match else query.split()
     results = [[], [], []]
@@ -28,7 +28,7 @@ def get_search_results(query, data, exact_match = False):
                 word_match_level = min(word_match_level, get_match_level(word, row))
             query_match_level = max(query_match_level, word_match_level)
         if query_match_level != consts.NOT_FOUND:
-            results[query_match_level].append(row)
+            results[query_match_level].append(copy.copy(row))
     merged_results = results[0] + results[1] + results[2]
     for result in merged_results:
         for level in range(3):
