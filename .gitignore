@@ -47,3 +47,8 @@ bower.json
 # Ignore node_modules
 node_modules/
 
+# Ignore Emacs backup files
+*~
+
+# Ignore Python shit
+__pycache__
