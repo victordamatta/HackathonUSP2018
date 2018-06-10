@@ -5,21 +5,31 @@
 #### 1. Clonar o repositório
 
 #### 2. Instalar pip
+
 $ sudo python -m pip install -U pylint
 
 #### 3. Instalar Flask
+
 $ pip3 install flask
 
 #### 4. Instalar nltk
+
 $ pip3 install nltk
+
 $ python3
+
     >>> import nltk
+
     >>> nltk.download()
+
     Downloader> d
 
 #### 5. localhost
+
 $ flask run
+
 ou
+
 $ python3 server/poswebserver.py
 
 ## API
@@ -72,3 +82,8 @@ GET localhost:500/server/SUA_PESQUISA
 Requisição para obter o grafo relacionado a SUA_PESQUISA
 
 #### Response para Lista de publicações
+
+ {
+     ...
+ }
+
