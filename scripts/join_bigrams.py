@@ -12,7 +12,7 @@ def bigramas():
     return bgs
 
 def bigramar(texto, bgs):
-    for line in text:
+    for line in texto:
         words = nltk.word_tokenize(line)
         past_word = ""
         for word in words:
