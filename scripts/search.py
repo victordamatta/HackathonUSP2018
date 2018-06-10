@@ -5,7 +5,7 @@ from collections import OrderedDict
 bigrams = join_bigrams.bigramas()
 
 with open('data/search_data.txt', 'r') as data_file:
-    data = eval(data_file.read())
+    data = json.loads(data_file.read())
 
 def get_match_level(query_word, row):
     for level in range(3):
@@ -38,7 +38,7 @@ def get_search_results(query, exact_match = False):
 
 if __name__ == '__main__':
     query = input()
-    results = get_search_results(query, data)
+    results = get_search_results(query)
     print(results)
     # print('Found %d matches:' % len(results))
     # for result in results:
