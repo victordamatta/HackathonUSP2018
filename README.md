@@ -30,7 +30,7 @@
 
 ou
 
-    $ python3 server/poswebserver.py
+    $ python3 server/poswebservice.py
 
 ## API
 
