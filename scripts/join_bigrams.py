@@ -12,17 +12,19 @@ def bigramas():
     return bgs
 
 def bigramar(texto, bgs):
-    for line in texto:
-        words = nltk.word_tokenize(line)
-        past_word = ""
-        for word in words:
-            if past_word in bgs and word.lower() == bgs[past_word].lower():
-                print("{}_{}".format(past_word, word), end=' ')
-                past_word = ""
-            else:
-                print(past_word, end=' ')
-                past_word = word
-        print()
+    bigrammed_words = []
+    # for line in texto:
+    words = nltk.word_tokenize(texto)
+    past_word = ""
+    for word in words:
+        if past_word in bgs and word.lower() == bgs[past_word].lower():
+            bigrammed_words.append('%s_%s' % (past_word, word))
+            past_word = ""
+        else:
+            bigrammed_words.append(past_word)
+            past_word = word
+    bigrammed_words.append(past_word)
+    return ' '.join(filter(lambda x: x != '', bigrammed_words))
 
 if __name__ == '__main__':
     bgs = bigramas()
