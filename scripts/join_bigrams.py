@@ -18,9 +18,10 @@ def bigramar(texto, bgs):
         for word in words:
             if past_word in bgs and word.lower() == bgs[past_word].lower():
                 print("{}_{}".format(past_word, word), end=' ')
+                past_word = ""
             else:
                 print(past_word, end=' ')
-            past_word = word
+                past_word = word
         print()
 
 if __name__ == '__main__':
