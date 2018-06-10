@@ -4,15 +4,11 @@
 
 #### 1. Clonar o repositório
 
-#### 2. Instalar pip
-
-    $ sudo python -m pip install -U pylint
-
-#### 3. Instalar Flask
+#### 2. Instalar Flask
 
     $ pip3 install flask
 
-#### 4. Instalar nltk
+#### 3. Instalar nltk
 
     $ pip3 install nltk
 
@@ -24,7 +20,7 @@
 
         Downloader> d
 
-#### 5. Subir no localhost
+#### 4. Subir no localhost
 
     $ flask run
 
