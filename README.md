@@ -24,7 +24,7 @@
 
         Downloader> d
 
-#### 5. localhost
+#### 5. Subir no localhost
 
     $ flask run
 
@@ -81,7 +81,7 @@ Requisição para obter a lista de publicações relacionadas a SUA_PESQUISA
 
 Requisição para obter o grafo relacionado a SUA_PESQUISA
 
-#### Response para Lista de publicações
+#### Response para Grafo
 
     {
         ...
