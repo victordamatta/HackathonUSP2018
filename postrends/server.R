@@ -15,7 +15,7 @@ shinyServer(function(input, output, session) {
       res <- readr::read_rds("compsci_com_cc_e_resumo.rds")
     }
     
-    if (nrow(res) == 0) {
+    if (nrow(res) <= 1) {
       showModal(modalDialog(
         title = "Sem Resultados",
         "A busca não retornou resultados. Por favor refaça a sua pesquisa!"))
@@ -30,6 +30,13 @@ shinyServer(function(input, output, session) {
       dplyr::mutate(
         data_de_defesa = lubridate::as_date(data_de_defesa)) %>%
       dplyr::filter(data_de_defesa >= input$corte[1], data_de_defesa <= input$corte[2])
+    
+    if (nrow(res) <= 1) {
+      showModal(modalDialog(
+        title = "Sem Resultados",
+        "A busca não retornou resultados. Por favor refaça a sua pesquisa!"))
+      return(readr::read_rds("compsci_com_cc_e_resumo.rds"))
+    }
     
     return(res)
   })
