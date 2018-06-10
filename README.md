@@ -76,14 +76,3 @@ Requisição para obter a lista de publicações relacionadas a SUA_PESQUISA
         },
         ...
     ]
-
-#### Request para Grafo
-
-Requisição para obter o grafo relacionado a SUA_PESQUISA
-
-#### Response para Grafo
-
-    {
-        ...
-    }
-
